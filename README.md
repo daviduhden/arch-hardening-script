@@ -39,14 +39,21 @@ This script is compatible with Arch Linux using GRUB, systemd-boot, or Syslinux 
 
 ## Usage
 
-Download the script and run:
+1. Clone or download this repository:
 
-```bash
-bash hardening.bash
-```
+    ```sh
+    git clone https://github.com/daviduhden/arch-hardening-script.git
+    cd arch-hardening-script
+    ```
 
-or
+2. Run the script:
 
-```bash
-chmod +x hardening.bash && ./hardening.bash
-```
+    ```sh
+    bash hardening.bash
+    ```
+
+    or
+
+    ```sh
+    chmod +x hardening.bash && ./hardening.bash
+    ```
