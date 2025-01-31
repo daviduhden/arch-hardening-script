@@ -73,7 +73,7 @@ systemd_boot_append() {
 }
 
 script_checks() {
-  if ! [ "${disable_checks}" = "1" ]; then
+  if [ "${disable_checks}" != "1" ]; then
     # Check for root
     if [[ "$(id -u)" -ne 0 ]]; then
       echo "This script needs to be run as root."
