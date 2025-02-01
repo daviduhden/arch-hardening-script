@@ -301,6 +301,16 @@ get_bubblewrap() {
   fi
 }
 
+install_bubblejail() {
+  ## Install apparmor.d from Chaotic-AUR.
+  if pacman -Qq bubblewrap &>/dev/null && grep -q "\[chaotic-aur\]" /etc/pacman.conf; then
+    read -r -p "Install bubblejail from Chaotic-AUR? (y/n) " install_bubblejail
+    if [ "${install_bubblejail}" = "y" ]; then
+      sudo pacman -S --noconfirm -q bubblejail
+    fi
+  fi
+}
+
 restrict_root() {
   ## Restricting root
   # Clear /etc/securetty
@@ -746,6 +756,7 @@ apparmor
 add_chaotic_aur
 install_apparmor_d
 get_bubblewrap
+install_bubblejail
 restrict_root
 firewall
 setup_tor

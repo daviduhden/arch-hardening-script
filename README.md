@@ -14,6 +14,7 @@ This script enhances the privacy and security of Arch Linux.
 * Enables Chaotic-AUR repository
 * Installs AppArmor profiles
 * Installs Bubblewrap
+* Installs Bubblejail
 * Restricts root access
 * Installs and configures UFW as a firewall
 * Sets up Tor
