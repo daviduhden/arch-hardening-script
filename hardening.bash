@@ -271,12 +271,12 @@ add_chaotic_aur() {
   ## Add Chaotic-AUR repository
   read -r -p "Add Chaotic-AUR repository? (y/n) " add_chaotic_aur
   if [ "${add_chaotic_aur}" = "y" ]; then
-    sudo pacman-key --recv-key 3056513887B78AEB --keyserver keyserver.ubuntu.com
-    sudo pacman-key --lsign-key 3056513887B78AEB
-    sudo pacman -U --noconfirm 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst'
-    sudo pacman -U --noconfirm 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst'
-    echo -e "\n[chaotic-aur]\nInclude = /etc/pacman.d/chaotic-mirrorlist" | sudo tee -a /etc/pacman.conf
-    sudo pacman -Syu --noconfirm
+    pacman-key --recv-key 3056513887B78AEB --keyserver keyserver.ubuntu.com
+    pacman-key --lsign-key 3056513887B78AEB
+    pacman -U --noconfirm 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst'
+    pacman -U --noconfirm 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst'
+    echo -e "\n[chaotic-aur]\nInclude = /etc/pacman.d/chaotic-mirrorlist" | tee -a /etc/pacman.conf
+    pacman -Syu --noconfirm
   fi
 }
 
@@ -285,11 +285,11 @@ install_apparmor_d() {
   if pacman -Qq apparmor &>/dev/null && grep -q "\[chaotic-aur\]" /etc/pacman.conf; then
     read -r -p "Install apparmor.d (AppArmor profiles) from Chaotic-AUR? (y/n) " install_apparmor_d
     if [ "${install_apparmor_d}" = "y" ]; then
-      sudo pacman -S --noconfirm -q apparmor.d-git
+      pacman -S --noconfirm -q apparmor.d-git
 
       # Enable fast caching compression of AppArmor profiles.
-      echo 'write-cache' | sudo tee -a /etc/apparmor/parser.conf
-      echo 'Optimize=compress-fast' | sudo tee -a /etc/apparmor/parser.conf
+      echo 'write-cache' | tee -a /etc/apparmor/parser.conf
+      echo 'Optimize=compress-fast' | tee -a /etc/apparmor/parser.conf
     fi
   fi
 }
@@ -310,7 +310,7 @@ install_bubblejail() {
   if pacman -Qq bubblewrap &>/dev/null && grep -q "\[chaotic-aur\]" /etc/pacman.conf; then
     read -r -p "Install bubblejail from Chaotic-AUR? (y/n) " install_bubblejail
     if [ "${install_bubblejail}" = "y" ]; then
-      sudo pacman -S --noconfirm -q bubblejail
+      pacman -S --noconfirm -q bubblejail
     fi
   fi
 }
