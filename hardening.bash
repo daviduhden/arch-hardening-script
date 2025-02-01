@@ -18,18 +18,17 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 while test $# -gt 0; do
-        case "$1" in
-                --disable-checks)
-                                # Disable script_checks.
-                                disable_checks=1
-                                exit 1
-                                ;;
-                *)
-                                echo "'${*}' is not a correct flag."
-                                exit 1
-                                ;;
-
-        esac
+  case "$1" in
+    --disable-checks)
+      # Disable script_checks.
+      disable_checks=1
+      exit 1
+      ;;
+    *)
+      echo "'${*}' is not a correct flag."
+      exit 1
+      ;;
+  esac
 done
 
 update_system() {
@@ -218,29 +217,6 @@ boot_parameter_hardening() {
       bootctl update
       sed -i "s|^options .*|& ${kernel_params}|" /boot/loader/entries/*.conf
     fi
-  fi
-}
-
-hidepid() {
-  ## Hidepid.
-  read -r -p "Use hidepid to hide other users' processes? (y/n) " hidepid
-  if [ "${hidepid}" = "y" ]; then
-    # Enable hidepid.
-    echo "proc /proc proc nosuid,nodev,noexec,hidepid=2,gid=proc 0 0" >> /etc/fstab
-
-    # Create proc group if it doesn't exist already.
-    if ! grep "proc" /etc/group &>/dev/null; then
-      groupadd proc
-    fi
-
-    # Create drop-in directory for systemd-logind if it doesn't already exist.
-    if ! [ -d "/etc/systemd/system/systemd-logind.service.d/" ]; then
-      mkdir /etc/systemd/system/systemd-logind.service.d/
-    fi
-
-    # Create exception for systemd-logind so user sessions still work.
-    echo "[Service]
-SupplementaryGroups=proc" > /etc/systemd/system/systemd-logind.service.d/hidepid.conf
   fi
 }
 
@@ -764,7 +740,6 @@ update_system
 script_checks
 sysctl_hardening
 boot_parameter_hardening
-hidepid
 disable_nf_conntrack_helper
 install_linux_hardened
 apparmor

@@ -8,7 +8,6 @@ This script enhances the privacy and security of Arch Linux.
 
 * Kernel hardening via sysctl and boot parameters
 * Disables IPv6 to reduce attack surface
-* Mounts `/proc` with `hidepid=2` to hide other users' processes
 * Disables the potentially dangerous Netfilter automatic conntrack helper assignment to reduce attack surface
 * Installs `linux-hardened`
 * Enables AppArmor
