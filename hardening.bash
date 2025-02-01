@@ -268,8 +268,8 @@ apparmor() {
 }
 
 add_chaotic_aur() {
-  ## Add Chaotic-AUR repository
-  read -r -p "Add Chaotic-AUR repository? (y/n) " add_chaotic_aur
+  ## Add the Chaotic-AUR repository
+  read -r -p "Add the Chaotic-AUR repository? (y/n) " add_chaotic_aur
   if [ "${add_chaotic_aur}" = "y" ]; then
     pacman-key --recv-key 3056513887B78AEB --keyserver keyserver.ubuntu.com
     pacman-key --lsign-key 3056513887B78AEB
