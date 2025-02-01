@@ -286,6 +286,10 @@ install_apparmor_d() {
     read -r -p "Install apparmor.d (AppArmor profiles) from Chaotic-AUR? (y/n) " install_apparmor_d
     if [ "${install_apparmor_d}" = "y" ]; then
       sudo pacman -S --noconfirm -q apparmor.d-git
+
+      # Enable fast caching compression of AppArmor profiles.
+      echo 'write-cache' | sudo tee -a /etc/apparmor/parser.conf
+      echo 'Optimize=compress-fast' | sudo tee -a /etc/apparmor/parser.conf
     fi
   fi
 }
