@@ -285,6 +285,8 @@ apparmor() {
       grub-mkconfig -o /boot/grub/grub.cfg
     elif [ "${use_syslinux}" = "y" ]; then
       syslinux_append "apparmor=1 security=apparmor audit=1"
+    elif [ "${use_systemd_boot}" = "y" ]; then
+      systemd_boot_append "apparmor=1 security=apparmor audit=1"
     fi
   fi
 }
