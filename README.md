@@ -11,7 +11,7 @@ This script enhances the privacy and security of Arch Linux.
 * Disables the potentially dangerous Netfilter automatic conntrack helper assignment to reduce attack surface
 * Installs `linux-hardened`
 * Enables AppArmor
-* Enables Chaotic-AUR repository
+* Adds the Chaotic-AUR repository
 * Installs AppArmor profiles
 * Installs Bubblewrap
 * Installs Bubblejail
