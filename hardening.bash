@@ -202,18 +202,18 @@ boot_parameter_hardening() {
       kernel_params="${kernel_params} ipv6.disable=1"
     fi
 
-    # GRUB-specific configuration.
+    # GRUB configuration.
     if [ "${use_grub}" = "y" ]; then
       # Add kernel hardening boot parameters.
       # shellcheck disable=SC2016
       echo "GRUB_CMDLINE_LINUX=\"$GRUB_CMDLINE_LINUX ${kernel_params}\"" > /etc/default/grub.d/40_kernel_hardening.cfg
       # Regenerate GRUB configuration file.
       grub-mkconfig -o /boot/grub/grub.cfg
+    # Syslinux configuration.
     elif [ "${use_syslinux}" = "y" ]; then
-      # Append new boot parameters.
       syslinux_append "${kernel_params}"
+    # Systemd-boot configuration.
     elif [ "${use_systemd_boot}" = "y" ]; then
-      # Append new boot parameters for systemd-boot.
       bootctl update
       sed -i "s|^options .*|& ${kernel_params}|" /boot/loader/entries/*.conf
     fi
