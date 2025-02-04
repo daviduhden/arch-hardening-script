@@ -435,7 +435,7 @@ mac_address_spoofing() {
 
       # Get mac spoofing script.
       mkdir -m 755 /usr/lib/arch-hardening-script
-      cp "$(dirname "$0")/spoof-mac-addresses.sh" /usr/lib/arch-hardening-script/spoof-mac-addresses
+      cp "$(dirname "$0")/spoof-mac-addresses.bash" /usr/lib/arch-hardening-script/spoof-mac-addresses
 
       # Set permissions.
       chown root -R /usr/lib/arch-hardening-script
