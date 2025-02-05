@@ -358,7 +358,7 @@ firewall() {
 
     # Enable UFW.
     ufw enable
-    systemctl enable ufw.service
+    systemctl enable --now ufw.service
 
     # Deny all incoming traffic.
     ufw default deny incoming # Also disables ICMP timestamps
@@ -507,6 +507,9 @@ install_usbguard() {
       # Installs usbguard.
       pacman -S --noconfirm -q usbguard
     fi
+
+    # Enable and start the USBGuard systemd service.
+    systemctl enable --now usbguard.service
   fi
 }
 
