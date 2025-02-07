@@ -303,7 +303,7 @@ add_chaotic_aur() {
 }
 
 install_apparmor_d() {
-  ## Install apparmor.d from Chaotic-AUR.
+  ## Install apparmor.d (AppArmor profiles) from Chaotic-AUR.
   if pacman -Qq apparmor &>/dev/null && grep -q "\[chaotic-aur\]" /etc/pacman.conf; then
     read -r -p "Install apparmor.d (AppArmor profiles) from Chaotic-AUR? (y/n) " install_apparmor_d
     if [ "${install_apparmor_d}" = "y" ]; then
