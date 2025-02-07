@@ -346,7 +346,7 @@ get_hardened_malloc() {
 
       # Add hardened_malloc to /etc/ld.so.preload
       if ! grep -q "libhardened_malloc.so" /etc/ld.so.preload; then
-        echo "libhardened_malloc.so" >> /etc/ld.so.preload
+        echo "/usr/lib/libhardened_malloc.so" >> /etc/ld.so.preload
       fi
     fi
   fi
