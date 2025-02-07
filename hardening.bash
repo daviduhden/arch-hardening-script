@@ -328,11 +328,26 @@ get_bubblewrap() {
 }
 
 install_bubblejail() {
-  ## Install apparmor.d from Chaotic-AUR.
+  ## Install bubblejail from Chaotic-AUR.
   if pacman -Qq bubblewrap &>/dev/null && grep -q "\[chaotic-aur\]" /etc/pacman.conf; then
     read -r -p "Install bubblejail from Chaotic-AUR? (y/n) " install_bubblejail
     if [ "${install_bubblejail}" = "y" ]; then
       pacman -S --noconfirm -q bubblejail
+    fi
+  fi
+}
+
+get_hardened_malloc() {
+  ## Install and configure hardened_malloc.
+  if grep -q "\[chaotic-aur\]" /etc/pacman.conf; then
+    read -r -p "Install and configure hardened_malloc? (y/n) " install_hardened_malloc
+    if [ "${install_hardened_malloc}" = "y" ]; then
+      pacman -S --noconfirm -q hardened_malloc
+
+      # Add hardened_malloc to /etc/ld.so.preload
+      if ! grep -q "libhardened_malloc.so" /etc/ld.so.preload; then
+        echo "libhardened_malloc.so" >> /etc/ld.so.preload
+      fi
     fi
   fi
 }
@@ -786,6 +801,7 @@ add_chaotic_aur
 install_apparmor_d
 get_bubblewrap
 install_bubblejail
+get_hardened_malloc
 restrict_root
 firewall
 setup_tor
