@@ -33,7 +33,7 @@ done
 
 update_system() {
   echo "Updating the system..."
-  pacman -Syu --noconfirm
+  pacman -Syu --noconfirm --needed
 }
 
 create_grub_directory() {
@@ -105,8 +105,7 @@ script_checks() {
     fi
 
     # Check if using systemd.
-    # shellcheck disable=SC2009
-    if ! ps -p 1 | grep systemd &>/dev/null; then
+    if ! systemctl >/dev/null 2>&1; then
       echo "This script can only be used with systemd."
       exit 1
     fi
@@ -235,8 +234,31 @@ install_linux_hardened() {
     # Install linux-hardened.
     pacman -S --noconfirm -q linux-hardened linux-hardened-headers
 
-    # Re-generate GRUB configuration.
-    grub-mkconfig -o /boot/grub/grub.cfg
+    # Enable linux-hardened in GRUB.
+    if [ "${use_grub}" = "y" ]; then
+      # Set default boot entry to linux-hardened.
+      sed -i 's/GRUB_DEFAULT=.*/GRUB_DEFAULT="Advanced options for Arch Linux>Arch Linux, with Linux linux-hardened"/' /etc/default/grub
+      grub-mkconfig -o /boot/grub/grub.cfg
+    elif [ "${use_syslinux}" = "y" ]; then
+      # Add linux-hardened entry to syslinux.
+      cat <<EOF >> /boot/syslinux/syslinux.cfg
+
+LABEL hardened
+  MENU LABEL Arch Linux (linux-hardened)
+  LINUX ../vmlinuz-linux-hardened
+  INITRD ../initramfs-linux-hardened.img
+  APPEND root=UUID=$(blkid -s UUID -o value $(findmnt -n -o SOURCE /)) rw
+EOF
+    elif [ "${use_systemd_boot}" = "y" ]; then
+      # Add linux-hardened entry to systemd-boot.
+      cat <<EOF > /boot/loader/entries/arch-hardened.conf
+title   Arch Linux (linux-hardened)
+linux   /vmlinuz-linux-hardened
+initrd  /initramfs-linux-hardened.img
+options root=UUID=$(blkid -s UUID -o value $(findmnt -n -o SOURCE /)) rw
+EOF
+      bootctl update
+    fi
   fi
 }
 
@@ -434,12 +456,12 @@ mac_address_spoofing() {
       fi
 
       # Get mac spoofing script.
-      mkdir -m 755 /usr/lib/arch-hardening-script
+      mkdir -p /usr/lib/arch-hardening-script
       cp "$(dirname "$0")/spoof-mac-addresses.bash" /usr/lib/arch-hardening-script/spoof-mac-addresses
 
       # Set permissions.
-      chown root -R /usr/lib/arch-hardening-script
-      chmod 744 /usr/lib/arch-hardening-script/spoof-mac-addresses
+      chown root:root /usr/lib/arch-hardening-script/spoof-mac-addresses
+      chmod 755 /usr/lib/arch-hardening-script/spoof-mac-addresses
 
       # Creates systemd service for MAC spoofing.
       cat <<EOF > /etc/systemd/system/macspoof.service
