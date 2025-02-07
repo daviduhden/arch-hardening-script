@@ -340,7 +340,7 @@ install_bubblejail() {
 get_hardened_malloc() {
   ## Install and configure hardened_malloc.
   if grep -q "\[chaotic-aur\]" /etc/pacman.conf; then
-    read -r -p "Install and configure hardened_malloc? (y/n) " install_hardened_malloc
+    read -r -p "Install and configure hardened_malloc? (y/n) " get_hardened_malloc
     if [ "${install_hardened_malloc}" = "y" ]; then
       pacman -S --noconfirm -q hardened_malloc
 
