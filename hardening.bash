@@ -344,10 +344,14 @@ get_hardened_malloc() {
     if [ "${get_hardened_malloc}" = "y" ]; then
       pacman -S --noconfirm -q hardened_malloc
 
+      # Set SUID permissions on hardened_malloc
+      chmod u+s /usr/lib/libhardened_malloc.so
+
       # Add hardened_malloc to /etc/ld.so.preload
       if ! grep -q "libhardened_malloc.so" /etc/ld.so.preload; then
         echo "/usr/lib/libhardened_malloc.so" >> /etc/ld.so.preload
       fi
+
     fi
   fi
 }
