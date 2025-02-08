@@ -339,77 +339,16 @@ install_bubblejail() {
 
 get_hardened_malloc() {
   ## Install and configure hardened_malloc.
-  read -r -p "Install and configure hardened_malloc? (y/n) " get_hardened_malloc
-  if [ "${get_hardened_malloc}" = "y" ]; then
-    # Update package lists
-    echo "Updating package lists..."
-    pacman -Sy --noconfirm
+  if grep -q "\[chaotic-aur\]" /etc/pacman.conf; then
+    read -r -p "Install and configure hardened_malloc? (y/n) " get_hardened_malloc
+    if [ "${get_hardened_malloc}" = "y" ]; then
+      pacman -S --noconfirm -q hardened_malloc
 
-    # Install required dependencies
-    echo "Installing dependencies..."
-    pacman -S --noconfirm gcc git gnupg curl
-
-    # Download and verify the signing key
-    echo "Downloading and verifying the signing key..."
-    curl -O https://github.com/thestinger.gpg
-    gpg --keyid-format long --with-fingerprint thestinger.gpg
-
-    echo "Importing the signing key..."
-    gpg --import thestinger.gpg
-
-    # Clone the Hardened Malloc repository
-    echo "Cloning the Hardened Malloc repository..."
-    git clone https://github.com/GrapheneOS/hardened_malloc
-    cd hardened_malloc
-
-    # Verify the signature of the latest tag
-    echo "Verifying the signature of the latest tag..."
-    LATEST_TAG=$(git describe --tags `git rev-list --tags --max-count=1`)
-    git tag --verify "$LATEST_TAG"
-
-    # Checkout the latest tag
-    echo "Checking out tag $LATEST_TAG..."
-    git checkout "$LATEST_TAG"
-
-    # Compile both default and light versions
-    echo "Compiling Hardened Malloc (default and light versions)..."
-    make VARIANT=default
-    make VARIANT=light
-
-    # Set the correct system library path
-    LIB_PATH="/usr/lib/x86_64-linux-gnu"
-    echo "Using library path: $LIB_PATH"
-
-    # Ask the user for the version to install
-    echo "Choose the version to install:"
-    echo "1) Default version"
-    echo "2) Light version"
-    read -p "Enter 1 or 2: " VERSION
-
-    if [ "$VERSION" == "1" ]; then
-        LIB_NAME="libhardened_malloc.so"
-        LIB_SOURCE="out/libhardened_malloc.so"
-    else
-        LIB_NAME="libhardened_malloc-light.so"
-        LIB_SOURCE="out-light/libhardened_malloc-light.so"
+      # Add hardened_malloc to /etc/ld.so.preload
+      if ! grep -q "libhardened_malloc.so" /etc/ld.so.preload; then
+        echo "/usr/lib/libhardened_malloc.so" >> /etc/ld.so.preload
+      fi
     fi
-
-    # Move the selected compiled library to the system folder
-    echo "Moving the selected library to the system..."
-    mkdir -p $LIB_PATH
-    mv "$LIB_SOURCE" "$LIB_PATH/$LIB_NAME"
-
-    # Set SUID permissions
-    echo "Setting SUID permissions..."
-    chmod u+s "$LIB_PATH/$LIB_NAME"
-
-    # Apply Hardened Malloc to all applications by default
-    echo "Applying Hardened Malloc to all applications by default..."
-    if ! grep -q "$LIB_PATH/$LIB_NAME" /etc/ld.so.preload; then
-      echo "$LIB_PATH/$LIB_NAME" >> /etc/ld.so.preload
-    fi
-
-    echo "Installation completed. Hardened Malloc ($LIB_NAME) is now applied to all applications by default."
   fi
 }
 
