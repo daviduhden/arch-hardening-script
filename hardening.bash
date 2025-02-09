@@ -354,7 +354,6 @@ get_hardened_malloc() {
 
       # Raise vm.max_map_count
       echo "vm.max_map_count = 1048576" > /etc/sysctl.d/hardened_malloc.conf
-      sysctl -p /etc/sysctl.d/hardened_malloc.conf
     fi
   fi
 }
