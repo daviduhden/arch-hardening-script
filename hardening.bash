@@ -17,25 +17,45 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-while test $# -gt 0; do
-  case "$1" in
-    --disable-checks)
-      # Disable script_checks.
-      disable_checks=1
-      exit 1
-      ;;
-    *)
-      echo "'${*}' is not a correct flag."
-      exit 1
-      ;;
-  esac
-done
+# Function to parse command-line arguments
+parse_arguments() {
+  while test $# -gt 0; do
+    case "$1" in
+      --disable-checks)
+        # Disable script_checks.
+        disable_checks=1
+        exit 1
+        ;;
+      *)
+        echo "'${*}' is not a correct flag."
+        exit 1
+        ;;
+    esac
+  done
+}
 
+# Function to set script options
+set_script_options() {
+  # Exit immediately if a command exits with a non-zero status,
+  # treat unset variables as an error, and prevent errors in a pipeline from being masked.
+  set -euo pipefail
+}
+
+# Function to ensure the script is run as root
+check_root() {
+  if [ "$(id -u)" -ne 0; then
+    echo "This script must be run as root. Please run it again with 'sudo' or as the root user."
+    exit 1
+  fi
+}
+
+# Function to update the system
 update_system() {
   echo "Updating the system..."
   pacman -Syu --noconfirm --needed
 }
 
+# Function to create GRUB directory
 create_grub_directory() {
   # Create /etc/default/grub.d if it doesn't already exist.
   if ! [ -d /etc/default/grub.d ]; then
@@ -53,6 +73,7 @@ done
   fi
 }
 
+# Function to append boot parameters for syslinux
 syslinux_append() {
   new_boot_parameters="$1"
 
@@ -63,6 +84,7 @@ syslinux_append() {
   sed -i "s|${syslinux_parameters}|${syslinux_parameters} ${new_boot_parameters}|" /boot/syslinux/syslinux.cfg
 }
 
+# Function to append boot parameters for systemd-boot
 systemd_boot_append() {
   new_boot_parameters="$1"
 
@@ -71,6 +93,7 @@ systemd_boot_append() {
   sed -i "s|^options .*|& ${new_boot_parameters}|" /boot/loader/entries/*.conf
 }
 
+# Function to perform script checks
 script_checks() {
   if [ "${disable_checks}" != "1" ]; then
     # Check for root
@@ -112,6 +135,7 @@ script_checks() {
   fi
 }
 
+# Function to harden the kernel with sysctl
 sysctl_hardening() {
   ## Sysctl
   read -r -p "Harden the kernel with sysctl? (y/n) " sysctl
@@ -188,6 +212,7 @@ fs.protected_regular=2" > /etc/sysctl.d/protected_files.conf
   fi
 }
 
+# Function to harden the kernel through boot parameters
 boot_parameter_hardening() {
   ## Boot Parameters.
   read -r -p "Harden the kernel through boot parameters? (y/n) " bootparams
@@ -219,6 +244,7 @@ boot_parameter_hardening() {
   fi
 }
 
+# Function to disable Netfilter connection tracking helper
 disable_nf_conntrack_helper() {
   ## Disable Netfilter connection tracking helper.
   read -r -p "Disable the Netfilter automatic conntrack helper assignment? (y/n) " disable_conntrack_helper
@@ -227,6 +253,7 @@ disable_nf_conntrack_helper() {
   fi
 }
 
+# Function to install linux-hardened
 install_linux_hardened() {
   ## Linux-Hardened
   read -r -p "Install linux-hardened? (y/n) " linux_hardened
@@ -262,6 +289,7 @@ EOF
   fi
 }
 
+# Function to enable AppArmor
 apparmor() {
   ## Apparmor
   read -r -p "Enable apparmor? (y/n) " enable_apparmor
@@ -289,6 +317,7 @@ apparmor() {
   fi
 }
 
+# Function to add the Chaotic-AUR repository
 add_chaotic_aur() {
   ## Add the Chaotic-AUR repository
   read -r -p "Add the Chaotic-AUR repository? (y/n) " add_chaotic_aur
@@ -302,6 +331,7 @@ add_chaotic_aur() {
   fi
 }
 
+# Function to install AppArmor profiles from Chaotic-AUR
 install_apparmor_d() {
   ## Install apparmor.d (AppArmor profiles) from Chaotic-AUR.
   if pacman -Qq apparmor &>/dev/null && grep -q "\[chaotic-aur\]" /etc/pacman.conf; then
@@ -316,6 +346,7 @@ install_apparmor_d() {
   fi
 }
 
+# Function to install bubblewrap
 get_bubblewrap() {
   ## Bubblewrap
   read -r -p "Install bubblewrap? (y/n) " install_bubblewrap
@@ -327,6 +358,7 @@ get_bubblewrap() {
   fi
 }
 
+# Function to install bubblejail from Chaotic-AUR
 install_bubblejail() {
   ## Install bubblejail from Chaotic-AUR.
   if pacman -Qq bubblewrap &>/dev/null && grep -q "\[chaotic-aur\]" /etc/pacman.conf; then
@@ -337,6 +369,7 @@ install_bubblejail() {
   fi
 }
 
+# Function to install and configure hardened_malloc
 get_hardened_malloc() {
   ## Install and configure hardened_malloc.
   if grep -q "\[chaotic-aur\]" /etc/pacman.conf; then
@@ -358,6 +391,7 @@ get_hardened_malloc() {
   fi
 }
 
+# Function to restrict root access
 restrict_root() {
   ## Restricting root
   # Clear /etc/securetty
@@ -390,6 +424,7 @@ restrict_root() {
   fi
 }
 
+# Function to install and configure UFW
 firewall() {
   ## Firewall
   read -r -p "Install and configure UFW? (y/n) " install_ufw
@@ -408,6 +443,7 @@ firewall() {
   fi
 }
 
+# Function to install and configure Tor
 setup_tor() {
   ## Tor.
   read -r -p "Do you want to install Tor? (y/n) " install_tor
@@ -435,6 +471,7 @@ SocksPort 9062''' >> /etc/tor/torrc
   fi
 }
 
+# Function to change hostname
 configure_hostname() {
   ## Change hostname to a generic one.
   read -r -p "Change hostname to 'host'? (y/n) " hostname
@@ -443,6 +480,7 @@ configure_hostname() {
   fi
 }
 
+# Function to block wireless devices
 block_wireless_devices() {
   ## Wireless devices
   read -r -p "Block all wireless devices with rfkill? (y/n) " block_wireless
@@ -465,6 +503,7 @@ install bluetooth /bin/true" > /etc/modprobe.d/blacklist-bluetooth.conf
   fi
 }
 
+# Function to spoof MAC addresses
 mac_address_spoofing() {
   ## MAC Address Spoofing.
   read -r -p "Spoof MAC address automatically at boot? (y/n) " spoof_mac_address
@@ -533,6 +572,7 @@ EOF
   fi
 }
 
+# Function to set a more restrictive umask
 configure_umask() {
   ## Set a more restrictive umask.
   read -r -p "Set a more restrictive umask? (y/n) " umask
@@ -541,6 +581,7 @@ configure_umask() {
   fi
 }
 
+# Function to install USBGuard
 install_usbguard() {
   ## USBGuard.
   read -r -p "Install USBGuard? (y/n) " usbguard
@@ -556,6 +597,7 @@ install_usbguard() {
   fi
 }
 
+# Function to blacklist DMA kernel modules
 blacklist_dma() {
   ## Blacklist thunderbolt and firewire kernel modules.
   read -r -p "Blacklist Thunderbolt and Firewire? (y/n) " thunderbolt_firewire
@@ -565,6 +607,7 @@ install thunderbolt /bin/true" > /etc/modprobe.d/blacklist-dma.conf
   fi
 }
 
+# Function to disable coredumps
 disable_coredumps() {
   ## Core Dumps
   read -r -p "Disable coredumps? (y/n) " coredumps
@@ -591,6 +634,7 @@ Storage=none" > /etc/systemd/coredump.conf.d/disable_coredumps.conf
   fi
 }
 
+# Function to install microcode updates
 microcode_updates() {
   ## Microcode updates.
   read -r -p "Install microcode updates? (y/n) " microcode
@@ -625,6 +669,7 @@ microcode_updates() {
   fi
 }
 
+# Function to disable NTP
 disable_ntp() {
   ## NTP
   read -r -p "Disable NTP? (y/n) " ntp
@@ -643,6 +688,7 @@ disable_ntp() {
   fi
 }
 
+# Function to enable IPv6 privacy extensions
 ipv6_privacy_extensions() {
   ## IPv6 Privacy Extensions
   if [ "${disable_ipv6}" != "y" ]; then
@@ -684,6 +730,7 @@ IPv6PrivacyExtensions=kernel" > /etc/systemd/network/ipv6_privacy.conf
   fi
 }
 
+# Function to blacklist uncommon network protocols
 blacklist_uncommon_network_protocols() {
   ## Blacklist uncommon network protocols.
   read -r -p "Blacklist uncommon network protocols? (y/n) " blacklist_net_protocols
@@ -714,6 +761,7 @@ EOF
   fi
 }
 
+# Function to disable mounting of uncommon filesystems
 disable_uncommon_filesystems() {
   ## Disable mounting of uncommon filesystems.
   read -r -p "Disable mounting of uncommon filesystems? (y/n) " blacklist_filesystems
@@ -736,6 +784,7 @@ EOF
   fi
 }
 
+# Function to gather more entropy
 more_entropy() {
   ## Gather more entropy.
   read -r -p "Do you want to gather more entropy? (y/n) " gather_more_entropy
@@ -759,6 +808,7 @@ more_entropy() {
   fi
 }
 
+# Function to block the webcam and microphone
 webcam_and_microphone() {
   ## Block the webcam and microphone.
   read -r -p "Do you want to blacklist the webcam kernel module? (y/n) " blacklist_webcam
@@ -780,12 +830,49 @@ webcam_and_microphone() {
   fi
 }
 
+# Function to prompt for reboot
 ending() {
   ## Reboot
   read -r -p "Reboot to apply all of the changes? (y/n) " reboot
   if [ "${reboot}" = "y" ]; then
     reboot
   fi
+}
+
+# Main script execution
+main() {
+  parse_arguments "$@"
+  set_script_options
+  update_system
+  script_checks
+  sysctl_hardening
+  boot_parameter_hardening
+  disable_nf_conntrack_helper
+  install_linux_hardened
+  apparmor
+  add_chaotic_aur
+  install_apparmor_d
+  get_bubblewrap
+  install_bubblejail
+  get_hardened_malloc
+  restrict_root
+  firewall
+  setup_tor
+  configure_hostname
+  block_wireless_devices
+  mac_address_spoofing
+  configure_umask
+  install_usbguard
+  blacklist_dma
+  disable_coredumps
+  microcode_updates
+  disable_ntp
+  ipv6_privacy_extensions
+  blacklist_uncommon_network_protocols
+  disable_uncommon_filesystems
+  more_entropy
+  webcam_and_microphone
+  ending
 }
 
 read -r -p "Start? (y/n) " start
@@ -796,33 +883,4 @@ elif ! [ "${start}" = "y" ]; then
   exit 1
 fi
 
-update_system
-script_checks
-sysctl_hardening
-boot_parameter_hardening
-disable_nf_conntrack_helper
-install_linux_hardened
-apparmor
-add_chaotic_aur
-install_apparmor_d
-get_bubblewrap
-install_bubblejail
-get_hardened_malloc
-restrict_root
-firewall
-setup_tor
-configure_hostname
-block_wireless_devices
-mac_address_spoofing
-configure_umask
-install_usbguard
-blacklist_dma
-disable_coredumps
-microcode_updates
-disable_ntp
-ipv6_privacy_extensions
-blacklist_uncommon_network_protocols
-disable_uncommon_filesystems
-more_entropy
-webcam_and_microphone
-ending
+main "$@"

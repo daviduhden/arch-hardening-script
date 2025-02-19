@@ -17,12 +17,18 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-# Get list of network interfaces. Excludes loopback and virtual machine interfaces.
-interfaces=$(ls /sys/class/net | grep -v 'lo' | grep -v 'tun0' | grep -v "virbr" | grep -v "docker" | grep -v "veth")
+# Function to spoof MAC addresses
+spoof_mac_addresses() {
+  # Get list of network interfaces. Excludes loopback and virtual machine interfaces.
+  interfaces=$(ls /sys/class/net | grep -v 'lo' | grep -v 'tun0' | grep -v "virbr" | grep -v "docker" | grep -v "veth")
 
-# Spoof the MAC address of each.
-for i in ${interfaces}; do
-  ip link set dev $i down
-  macchanger -e $i >/dev/null # Hide the output so it can't be discovered with systemd logs.
-  ip link set dev $i up
-done
+  # Spoof the MAC address of each.
+  for i in ${interfaces}; do
+    ip link set dev $i down
+    macchanger -e $i >/dev/null # Hide the output so it can't be discovered with systemd logs.
+    ip link set dev $i up
+  done
+}
+
+# Call the function
+spoof_mac_addresses
