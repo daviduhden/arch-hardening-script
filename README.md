@@ -1,6 +1,6 @@
 # Arch Hardening Script
 
-This script enhances the privacy and security of Arch Linux.
+This script enhances the privacy and security of Arch Linux. Any contribution is highly appreciated.
 
 **WARNING:** It is highly recommended to read and understand the guide before running this script. Do not execute commands you do not understand, as this may lead to unexpected errors. This script alone is not sufficient for complete security. Security requires ongoing efforts such as maintaining AppArmor profiles and practicing good security habits.
 
