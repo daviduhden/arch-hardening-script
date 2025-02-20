@@ -1,4 +1,4 @@
-#!/bin/bash -e
+#!/bin/bash
 
 # Hardening Script for Arch Linux
 # Copyright (C) 2019 madaidan
