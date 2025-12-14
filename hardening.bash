@@ -1,5 +1,11 @@
 #!/bin/bash
 
+if [[ -z "${ZSH_VERSION:-}" ]] && command -v zsh >/dev/null 2>&1; then
+  exec zsh "$0" "$@"
+fi
+
+set -euo pipefail
+
 # Hardening Script for Arch Linux
 # Copyright (C) 2019 madaidan
 # Copyright (C) 2025 David Uhden Collado
@@ -17,6 +23,17 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+# Simple colored logging
+if [[ -t 1 && "${NO_COLOR:-}" != "1" ]]; then
+  GREEN="\033[32m"; YELLOW="\033[33m"; RED="\033[31m"; RESET="\033[0m"
+else
+  GREEN=""; YELLOW=""; RED=""; RESET=""
+fi
+
+log()    { printf '%s %b[INFO]%b ✅ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$GREEN" "$RESET" "$*"; }
+warn()   { printf '%s %b[WARN]%b ⚠️ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$YELLOW" "$RESET" "$*" >&2; }
+error()  { printf '%s %b[ERROR]%b ❌ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$RED" "$RESET" "$*" >&2; }
+
 # Function to parse command-line arguments
 parse_arguments() {
   while test $# -gt 0; do
@@ -27,31 +44,24 @@ parse_arguments() {
         exit 1
         ;;
       *)
-        echo "'${*}' is not a correct flag."
+        error "'${*}' is not a correct flag."
         exit 1
         ;;
     esac
   done
 }
 
-# Function to set script options
-set_script_options() {
-  # Exit immediately if a command exits with a non-zero status,
-  # treat unset variables as an error, and prevent errors in a pipeline from being masked.
-  set -euo pipefail
-}
-
 # Function to ensure the script is run as root
 check_root() {
   if [ "$(id -u)" -ne 0; then
-    echo "This script must be run as root. Please run it again with 'sudo' or as the root user."
+    error "This script must be run as root. Please run it again with 'sudo' or as the root user."
     exit 1
   fi
 }
 
 # Function to update the system
 update_system() {
-  echo "Updating the system..."
+  log "Updating the system..."
   pacman -Syu --noconfirm --needed
 }
 
@@ -98,13 +108,13 @@ script_checks() {
   if [ "${disable_checks}" != "1" ]; then
     # Check for root
     if [[ "$(id -u)" -ne 0 ]]; then
-      echo "This script needs to be run as root."
+      error "This script needs to be run as root."
       exit 1
     fi
 
     # Check if on Arch Linux.
     if ! grep "Arch Linux" /etc/os-release &>/dev/null; then
-      echo "This script can only be used on Arch Linux."
+      error "This script can only be used on Arch Linux."
       exit 1
     fi
 
@@ -117,19 +127,19 @@ script_checks() {
       use_syslinux="y"
 
       if ! grep "MENU LABEL Arch Linux" /boot/syslinux/syslinux.cfg >/dev/null; then
-        echo "The 'Arch Linux' menu label is missing from your Syslinux configuration file."
+        error "The 'Arch Linux' menu label is missing from your Syslinux configuration file."
         exit 1
       fi
     elif [ -d /boot/loader ]; then
       use_systemd_boot="y"
     else
-      echo "This script can only be used with GRUB, syslinux, or systemd-boot."
+      error "This script can only be used with GRUB, syslinux, or systemd-boot."
       exit 1
     fi
 
     # Check if using systemd.
     if ! systemctl >/dev/null 2>&1; then
-      echo "This script can only be used with systemd."
+      error "This script can only be used with systemd."
       exit 1
     fi
   fi
@@ -879,7 +889,7 @@ read -r -p "Start? (y/n) " start
 if [ "${start}" = "n" ]; then
   exit 1
 elif ! [ "${start}" = "y" ]; then
-  echo "You did not enter a correct character."
+  warn "You did not enter a correct character."
   exit 1
 fi
 

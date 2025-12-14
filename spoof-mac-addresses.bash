@@ -1,5 +1,21 @@
 #!/bin/bash
 
+if [[ -z "${ZSH_VERSION:-}" ]] && command -v zsh >/dev/null 2>&1; then
+  exec zsh "$0" "$@"
+fi
+
+set -euo pipefail
+
+if [[ -t 1 && "${NO_COLOR:-}" != "1" ]]; then
+  GREEN="\033[32m"; YELLOW="\033[33m"; RED="\033[31m"; RESET="\033[0m"
+else
+  GREEN=""; YELLOW=""; RED=""; RESET=""
+fi
+
+log()   { printf '%s %b[INFO]%b ✅ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$GREEN" "$RESET" "$*"; }
+warn()  { printf '%s %b[WARN]%b ⚠️ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$YELLOW" "$RESET" "$*" >&2; }
+error() { printf '%s %b[ERROR]%b ❌ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$RED" "$RESET" "$*" >&2; }
+
 # MAC addresses spoofing script for Linux
 # Copyright (C) 2019 madaidan
 # Copyright (C) 2025 David Uhden Collado
@@ -24,11 +40,14 @@ spoof_mac_addresses() {
 
   # Spoof the MAC address of each.
   for i in ${interfaces}; do
-    ip link set dev $i down
-    macchanger -e $i >/dev/null # Hide the output so it can't be discovered with systemd logs.
-    ip link set dev $i up
+    ip link set dev "$i" down
+    macchanger -e "$i" >/dev/null || warn "macchanger failed on $i"
+    ip link set dev "$i" up
   done
 }
 
-# Call the function
-spoof_mac_addresses
+main() {
+  spoof_mac_addresses
+}
+
+main "$@"
