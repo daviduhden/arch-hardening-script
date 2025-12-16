@@ -1,7 +1,7 @@
 #!/bin/bash
 
-if [[ -z "${ZSH_VERSION:-}" ]] && command -v zsh >/dev/null 2>&1; then
-  exec zsh "$0" "$@"
+if [[ -z ${ZSH_VERSION:-} ]] && command -v zsh >/dev/null 2>&1; then
+	exec zsh "$0" "$@"
 fi
 
 set -euo pipefail
@@ -24,165 +24,170 @@ set -euo pipefail
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 # Simple colored logging
-if [[ -t 1 && "${NO_COLOR:-}" != "1" ]]; then
-  GREEN="\033[32m"; YELLOW="\033[33m"; RED="\033[31m"; RESET="\033[0m"
+if [[ -t 1 && ${NO_COLOR:-} != "1" ]]; then
+	GREEN="\033[32m"
+	YELLOW="\033[33m"
+	RED="\033[31m"
+	RESET="\033[0m"
 else
-  GREEN=""; YELLOW=""; RED=""; RESET=""
+	GREEN=""
+	YELLOW=""
+	RED=""
+	RESET=""
 fi
 
-log()    { printf '%s %b[INFO]%b ✅ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$GREEN" "$RESET" "$*"; }
-warn()   { printf '%s %b[WARN]%b ⚠️ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$YELLOW" "$RESET" "$*" >&2; }
-error()  { printf '%s %b[ERROR]%b ❌ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$RED" "$RESET" "$*" >&2; }
+log() { printf '%s %b[INFO]%b ✅ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$GREEN" "$RESET" "$*"; }
+warn() { printf '%s %b[WARN]%b ⚠️ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$YELLOW" "$RESET" "$*" >&2; }
+error() { printf '%s %b[ERROR]%b ❌ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$RED" "$RESET" "$*" >&2; }
 
 # Function to parse command-line arguments
 parse_arguments() {
-  while test $# -gt 0; do
-    case "$1" in
-      --disable-checks)
-        # Disable script_checks.
-        disable_checks=1
-        exit 1
-        ;;
-      *)
-        error "'${*}' is not a correct flag."
-        exit 1
-        ;;
-    esac
-  done
+	while test $# -gt 0; do
+		case "$1" in
+		--disable-checks)
+			# Disable script_checks.
+			disable_checks=1
+			exit 1
+			;;
+		*)
+			error "'${*}' is not a correct flag."
+			exit 1
+			;;
+		esac
+	done
 }
 
 # Function to ensure the script is run as root
 check_root() {
-  if [ "$(id -u)" -ne 0; then
-    error "This script must be run as root. Please run it again with 'sudo' or as the root user."
-    exit 1
-  fi
+	if [ "$(id -u)" -ne 0 ]; then
+		error "This script must be run as root. Please run it again with 'sudo' or as the root user."
+		exit 1
+	fi
 }
 
 # Function to update the system
 update_system() {
-  log "Updating the system..."
-  pacman -Syu --noconfirm --needed
+	log "Updating the system..."
+	pacman -Syu --noconfirm --needed
 }
 
 # Function to create GRUB directory
 create_grub_directory() {
-  # Create /etc/default/grub.d if it doesn't already exist.
-  if ! [ -d /etc/default/grub.d ]; then
-    mkdir -m 755 /etc/default/grub.d
+	# Create /etc/default/grub.d if it doesn't already exist.
+	if ! [ -d /etc/default/grub.d ]; then
+		mkdir -m 755 /etc/default/grub.d
 
-    # Make /etc/default/grub source grub.d.
-    # shellcheck disable=SC2016
-    echo '
+		# Make /etc/default/grub source grub.d.
+		cat >>/etc/default/grub <<'EOF'
 for i in /etc/default/grub.d/*.cfg ; do
 if [ -e "${i}" ]; then
-  . "${i}"
+	. "${i}"
 fi
 done
-' >> /etc/default/grub
-  fi
+EOF
+	fi
 }
 
 # Function to append boot parameters for syslinux
 syslinux_append() {
-  new_boot_parameters="$1"
+	new_boot_parameters="$1"
 
-  # Get list of current boot parameters.
-  syslinux_parameters=$(grep -v "Fallback" /boot/syslinux/syslinux.cfg | grep -C 2 "MENU LABEL Arch Linux" | grep "APPEND")
+	# Get list of current boot parameters.
+	syslinux_parameters=$(grep -v "Fallback" /boot/syslinux/syslinux.cfg | grep -C 2 "MENU LABEL Arch Linux" | grep "APPEND")
 
-  # Add new boot parameters.
-  sed -i "s|${syslinux_parameters}|${syslinux_parameters} ${new_boot_parameters}|" /boot/syslinux/syslinux.cfg
+	# Add new boot parameters.
+	sed -i "s|${syslinux_parameters}|${syslinux_parameters} ${new_boot_parameters}|" /boot/syslinux/syslinux.cfg
 }
 
 # Function to append boot parameters for systemd-boot
 systemd_boot_append() {
-  new_boot_parameters="$1"
+	new_boot_parameters="$1"
 
-  # Append new boot parameters for systemd-boot.
-  bootctl update
-  sed -i "s|^options .*|& ${new_boot_parameters}|" /boot/loader/entries/*.conf
+	# Append new boot parameters for systemd-boot.
+	bootctl update
+	sed -i "s|^options .*|& ${new_boot_parameters}|" /boot/loader/entries/*.conf
 }
 
 # Function to perform script checks
 script_checks() {
-  if [ "${disable_checks}" != "1" ]; then
-    # Check for root
-    if [[ "$(id -u)" -ne 0 ]]; then
-      error "This script needs to be run as root."
-      exit 1
-    fi
+	if [ "${disable_checks}" != "1" ]; then
+		# Check for root
+		if [[ "$(id -u)" -ne 0 ]]; then
+			error "This script needs to be run as root."
+			exit 1
+		fi
 
-    # Check if on Arch Linux.
-    if ! grep "Arch Linux" /etc/os-release &>/dev/null; then
-      error "This script can only be used on Arch Linux."
-      exit 1
-    fi
+		# Check if on Arch Linux.
+		if ! grep "Arch Linux" /etc/os-release &>/dev/null; then
+			error "This script can only be used on Arch Linux."
+			exit 1
+		fi
 
-    # Check which bootloader is being used.
-    if [ -d /boot/grub ]; then
-      use_grub="y"
-      # Create /etc/default/grub.d if it doesn't already exist.
-      create_grub_directory
-    elif [ -d /boot/syslinux ]; then
-      use_syslinux="y"
+		# Check which bootloader is being used.
+		if [ -d /boot/grub ]; then
+			use_grub="y"
+			# Create /etc/default/grub.d if it doesn't already exist.
+			create_grub_directory
+		elif [ -d /boot/syslinux ]; then
+			use_syslinux="y"
 
-      if ! grep "MENU LABEL Arch Linux" /boot/syslinux/syslinux.cfg >/dev/null; then
-        error "The 'Arch Linux' menu label is missing from your Syslinux configuration file."
-        exit 1
-      fi
-    elif [ -d /boot/loader ]; then
-      use_systemd_boot="y"
-    else
-      error "This script can only be used with GRUB, syslinux, or systemd-boot."
-      exit 1
-    fi
+			if ! grep "MENU LABEL Arch Linux" /boot/syslinux/syslinux.cfg >/dev/null; then
+				error "The 'Arch Linux' menu label is missing from your Syslinux configuration file."
+				exit 1
+			fi
+		elif [ -d /boot/loader ]; then
+			use_systemd_boot="y"
+		else
+			error "This script can only be used with GRUB, syslinux, or systemd-boot."
+			exit 1
+		fi
 
-    # Check if using systemd.
-    if ! systemctl >/dev/null 2>&1; then
-      error "This script can only be used with systemd."
-      exit 1
-    fi
-  fi
+		# Check if using systemd.
+		if ! systemctl >/dev/null 2>&1; then
+			error "This script can only be used with systemd."
+			exit 1
+		fi
+	fi
 }
 
 # Function to harden the kernel with sysctl
 sysctl_hardening() {
-  ## Sysctl
-  read -r -p "Harden the kernel with sysctl? (y/n) " sysctl
-  if [ "${sysctl}" = "y" ]; then
-    # Hide kernel symbols in /proc/kallsyms.
-    echo "kernel.kptr_restrict=2" > /etc/sysctl.d/kptr_restrict.conf
+	## Sysctl
+	read -r -p "Harden the kernel with sysctl? (y/n) " sysctl
+	if [ "${sysctl}" = "y" ]; then
+		# Hide kernel symbols in /proc/kallsyms.
+		echo "kernel.kptr_restrict=2" >/etc/sysctl.d/kptr_restrict.conf
 
-    # Restrict dmesg to root.
-    echo "kernel.dmesg_restrict=1" > /etc/sysctl.d/dmesg_restrict.conf
+		# Restrict dmesg to root.
+		echo "kernel.dmesg_restrict=1" >/etc/sysctl.d/dmesg_restrict.conf
 
-    # Prevent kernel log from being displayed in the console during boot.
-    echo "kernel.printk=3 3 3 3" > /etc/sysctl.d/printk.conf
+		# Prevent kernel log from being displayed in the console during boot.
+		echo "kernel.printk=3 3 3 3" >/etc/sysctl.d/printk.conf
 
-    # Harden BPF JIT compiler.
-    echo "kernel.unprivileged_bpf_disabled=1
-net.core.bpf_jit_harden=2" > /etc/sysctl.d/harden_bpf.conf
+		# Harden BPF JIT compiler.
+		echo "kernel.unprivileged_bpf_disabled=1
+net.core.bpf_jit_harden=2" >/etc/sysctl.d/harden_bpf.conf
 
-    # Restrict loading TTY line disciplines.
-    echo "dev.tty.ldisc_autoload=0" > /etc/sysctl.d/ldisc_autoload.conf
+		# Restrict loading TTY line disciplines.
+		echo "dev.tty.ldisc_autoload=0" >/etc/sysctl.d/ldisc_autoload.conf
 
-    # Restrict userfaultfd syscall.
-    echo "vm.unprivileged_userfaultfd=0" > /etc/sysctl.d/userfaultfd.conf
+		# Restrict userfaultfd syscall.
+		echo "vm.unprivileged_userfaultfd=0" >/etc/sysctl.d/userfaultfd.conf
 
-    # Disable kexec.
-    echo "kernel.kexec_load_disabled=1" > /etc/sysctl.d/kexec.conf
+		# Disable kexec.
+		echo "kernel.kexec_load_disabled=1" >/etc/sysctl.d/kexec.conf
 
-    # Disable the SysRq key.
-    echo "kernel.sysrq=4" > /etc/sysctl.d/sysrq.conf
+		# Disable the SysRq key.
+		echo "kernel.sysrq=4" >/etc/sysctl.d/sysrq.conf
 
-    # Disable unprivileged user namespaces.
-    echo "kernel.unprivileged_userns_clone=0" > /etc/sysctl.d/unprivileged_userns.conf
+		# Disable unprivileged user namespaces.
+		echo "kernel.unprivileged_userns_clone=0" >/etc/sysctl.d/unprivileged_userns.conf
 
-    # Restrict performance events.
-    echo "kernel.perf_event_paranoid=3" > /etc/sysctl.d/perf_event.conf
+		# Restrict performance events.
+		echo "kernel.perf_event_paranoid=3" >/etc/sysctl.d/perf_event.conf
 
-    # Harden the TCP/IP stack.
-    echo "net.ipv4.tcp_syncookies=1
+		# Harden the TCP/IP stack.
+		echo "net.ipv4.tcp_syncookies=1
 net.ipv4.tcp_rfc1337=1
 net.ipv4.conf.all.rp_filter=1
 net.ipv4.conf.default.rp_filter=1
@@ -203,338 +208,344 @@ net.ipv6.conf.all.accept_ra=0
 net.ipv6.conf.default.accept_ra=0
 net.ipv4.tcp_sack=0
 net.ipv4.tcp_dsack=0
-net.ipv4.tcp_fack=0" > /etc/sysctl.d/tcp_hardening.conf
+net.ipv4.tcp_fack=0" >/etc/sysctl.d/tcp_hardening.conf
 
-    # Restrict ptrace to root.
-    echo "kernel.yama.ptrace_scope=2" > /etc/sysctl.d/ptrace_scope.conf
+		# Restrict ptrace to root.
+		echo "kernel.yama.ptrace_scope=2" >/etc/sysctl.d/ptrace_scope.conf
 
-    # Improve ASLR for mmap.
-    echo "vm.mmap_rnd_bits=32
-vm.mmap_rnd_compat_bits=16" > /etc/sysctl.d/mmap_aslr.conf
+		# Improve ASLR for mmap.
+		echo "vm.mmap_rnd_bits=32
+vm.mmap_rnd_compat_bits=16" >/etc/sysctl.d/mmap_aslr.conf
 
-    # Protect symlinks and hardlinks.
-    echo "fs.protected_symlinks=1
-fs.protected_hardlinks=1" > /etc/sysctl.d/protected_links.conf
+		# Protect symlinks and hardlinks.
+		echo "fs.protected_symlinks=1
+fs.protected_hardlinks=1" >/etc/sysctl.d/protected_links.conf
 
-    # Protect FIFOs and regular files.
-    echo "fs.protected_fifos=2
-fs.protected_regular=2" > /etc/sysctl.d/protected_files.conf
-  fi
+		# Protect FIFOs and regular files.
+		echo "fs.protected_fifos=2
+fs.protected_regular=2" >/etc/sysctl.d/protected_files.conf
+	fi
 }
 
 # Function to harden the kernel through boot parameters
 boot_parameter_hardening() {
-  ## Boot Parameters.
-  read -r -p "Harden the kernel through boot parameters? (y/n) " bootparams
-  if [ "${bootparams}" = "y" ]; then
-    # Define the boot parameters.
-    kernel_params="slab_nomerge init_on_alloc=1 init_on_free=1 page_alloc.shuffle=1 pti=on randomize_kstack_offset=on vsyscall=none debugfs=off oops=panic module.sig_enforce=1 lockdown=confidentiality quiet loglevel=0 spectre_v2=on spec_store_bypass_disable=on tsx=off tsx_async_abort=full,nosmt mds=full,nosmt mmio_stale_data=full,nosmt l1tf=full,force nosmt=force kvm.nx_huge_pages=force retbleed=auto,nosmt"
+	## Boot Parameters.
+	read -r -p "Harden the kernel through boot parameters? (y/n) " bootparams
+	if [ "${bootparams}" = "y" ]; then
+		# Define the boot parameters.
+		kernel_params="slab_nomerge init_on_alloc=1 init_on_free=1 page_alloc.shuffle=1 pti=on randomize_kstack_offset=on vsyscall=none debugfs=off oops=panic module.sig_enforce=1 lockdown=confidentiality quiet loglevel=0 spectre_v2=on spec_store_bypass_disable=on tsx=off tsx_async_abort=full,nosmt mds=full,nosmt mmio_stale_data=full,nosmt l1tf=full,force nosmt=force kvm.nx_huge_pages=force retbleed=auto,nosmt"
 
-    # Add ipv6.disable=1 if not using IPv6.
-    read -r -p "Disable IPv6? (y/n) " disable_ipv6
-    if [ "${disable_ipv6}" = "y" ]; then
-      kernel_params="${kernel_params} ipv6.disable=1"
-    fi
+		# Add ipv6.disable=1 if not using IPv6.
+		read -r -p "Disable IPv6? (y/n) " disable_ipv6
+		if [ "${disable_ipv6}" = "y" ]; then
+			kernel_params="${kernel_params} ipv6.disable=1"
+		fi
 
-    # GRUB configuration.
-    if [ "${use_grub}" = "y" ]; then
-      # Add kernel hardening boot parameters.
-      # shellcheck disable=SC2016
-      echo "GRUB_CMDLINE_LINUX=\"$GRUB_CMDLINE_LINUX ${kernel_params}\"" > /etc/default/grub.d/40_kernel_hardening.cfg
-      # Regenerate GRUB configuration file.
-      grub-mkconfig -o /boot/grub/grub.cfg
-    # Syslinux configuration.
-    elif [ "${use_syslinux}" = "y" ]; then
-      syslinux_append "${kernel_params}"
-    # Systemd-boot configuration.
-    elif [ "${use_systemd_boot}" = "y" ]; then
-      bootctl update
-      sed -i "s|^options .*|& ${kernel_params}|" /boot/loader/entries/*.conf
-    fi
-  fi
+		# GRUB configuration.
+		if [ "${use_grub}" = "y" ]; then
+			# Add kernel hardening boot parameters.
+			cat >/etc/default/grub.d/40_kernel_hardening.cfg <<EOF
+GRUB_CMDLINE_LINUX="$GRUB_CMDLINE_LINUX ${kernel_params}"
+EOF
+			# Regenerate GRUB configuration file.
+			grub-mkconfig -o /boot/grub/grub.cfg
+		# Syslinux configuration.
+		elif [ "${use_syslinux}" = "y" ]; then
+			syslinux_append "${kernel_params}"
+		# Systemd-boot configuration.
+		elif [ "${use_systemd_boot}" = "y" ]; then
+			bootctl update
+			sed -i "s|^options .*|& ${kernel_params}|" /boot/loader/entries/*.conf
+		fi
+	fi
 }
 
 # Function to disable Netfilter connection tracking helper
 disable_nf_conntrack_helper() {
-  ## Disable Netfilter connection tracking helper.
-  read -r -p "Disable the Netfilter automatic conntrack helper assignment? (y/n) " disable_conntrack_helper
-  if [ "${disable_conntrack_helper}" = "y" ]; then
-    echo "options nf_conntrack nf_conntrack_helper=0" > /etc/modprobe.d/no-conntrack-helper.conf
-  fi
+	## Disable Netfilter connection tracking helper.
+	read -r -p "Disable the Netfilter automatic conntrack helper assignment? (y/n) " disable_conntrack_helper
+	if [ "${disable_conntrack_helper}" = "y" ]; then
+		echo "options nf_conntrack nf_conntrack_helper=0" >/etc/modprobe.d/no-conntrack-helper.conf
+	fi
 }
 
 # Function to install linux-hardened
 install_linux_hardened() {
-  ## Linux-Hardened
-  read -r -p "Install linux-hardened? (y/n) " linux_hardened
-  if [ "${linux_hardened}" = "y" ]; then
-    # Install linux-hardened.
-    pacman -S --noconfirm -q linux-hardened linux-hardened-headers
+	## Linux-Hardened
+	read -r -p "Install linux-hardened? (y/n) " linux_hardened
+	if [ "${linux_hardened}" = "y" ]; then
+		# Install linux-hardened.
+		pacman -S --noconfirm -q linux-hardened linux-hardened-headers
 
-    # Enable linux-hardened in GRUB.
-    if [ "${use_grub}" = "y" ]; then
-      # Set default boot entry to linux-hardened.
-      sed -i 's/GRUB_DEFAULT=.*/GRUB_DEFAULT="Advanced options for Arch Linux>Arch Linux, with Linux linux-hardened"/' /etc/default/grub
-      grub-mkconfig -o /boot/grub/grub.cfg
-    elif [ "${use_syslinux}" = "y" ]; then
-      # Add linux-hardened entry to syslinux.
-      cat <<EOF >> /boot/syslinux/syslinux.cfg
+		# Enable linux-hardened in GRUB.
+		if [ "${use_grub}" = "y" ]; then
+			# Set default boot entry to linux-hardened.
+			sed -i 's/GRUB_DEFAULT=.*/GRUB_DEFAULT="Advanced options for Arch Linux>Arch Linux, with Linux linux-hardened"/' /etc/default/grub
+			grub-mkconfig -o /boot/grub/grub.cfg
+		elif [ "${use_syslinux}" = "y" ]; then
+			# Add linux-hardened entry to syslinux.
+			src=$(findmnt -n -o SOURCE /)
+			uuid=$(blkid -s UUID -o value "$src")
+			cat <<EOF >>/boot/syslinux/syslinux.cfg
 
 LABEL hardened
-  MENU LABEL Arch Linux (linux-hardened)
-  LINUX ../vmlinuz-linux-hardened
-  INITRD ../initramfs-linux-hardened.img
-  APPEND root=UUID=$(blkid -s UUID -o value $(findmnt -n -o SOURCE /)) rw
+	MENU LABEL Arch Linux (linux-hardened)
+	LINUX ../vmlinuz-linux-hardened
+	INITRD ../initramfs-linux-hardened.img
+	APPEND root=UUID=${uuid} rw
 EOF
-    elif [ "${use_systemd_boot}" = "y" ]; then
-      # Add linux-hardened entry to systemd-boot.
-      cat <<EOF > /boot/loader/entries/arch-hardened.conf
+		elif [ "${use_systemd_boot}" = "y" ]; then
+			# Add linux-hardened entry to systemd-boot.
+			src=$(findmnt -n -o SOURCE /)
+			uuid=$(blkid -s UUID -o value "$src")
+			cat <<EOF >/boot/loader/entries/arch-hardened.conf
 title   Arch Linux (linux-hardened)
 linux   /vmlinuz-linux-hardened
 initrd  /initramfs-linux-hardened.img
-options root=UUID=$(blkid -s UUID -o value $(findmnt -n -o SOURCE /)) rw
+options root=UUID=${uuid} rw
 EOF
-      bootctl update
-    fi
-  fi
+			bootctl update
+		fi
+	fi
 }
 
 # Function to enable AppArmor
 apparmor() {
-  ## Apparmor
-  read -r -p "Enable apparmor? (y/n) " enable_apparmor
-  if [ "${enable_apparmor}" = "y" ]; then
-    # Check if apparmor is installed and if not, install it
-    if ! pacman -Qq apparmor &>/dev/null; then
-      pacman -S --noconfirm -q apparmor
-    fi
+	## Apparmor
+	read -r -p "Enable apparmor? (y/n) " enable_apparmor
+	if [ "${enable_apparmor}" = "y" ]; then
+		# Check if apparmor is installed and if not, install it
+		if ! pacman -Qq apparmor &>/dev/null; then
+			pacman -S --noconfirm -q apparmor
+		fi
 
-    # Enable AppArmor systemd service.
-    systemctl enable apparmor.service
+		# Enable AppArmor systemd service.
+		systemctl enable apparmor.service
 
-    # Enable AppArmor with a boot parameter.
-    if [ "${use_grub}" = "y" ]; then
-      # shellcheck disable=SC2016
-      echo '''GRUB_CMDLINE_LINUX="$GRUB_CMDLINE_LINUX apparmor=1 security=apparmor audit=1"''' > /etc/default/grub.d/40_enable_apparmor.cfg
+		# Enable AppArmor with a boot parameter.
+		if [ "${use_grub}" = "y" ]; then
+			cat >/etc/default/grub.d/40_enable_apparmor.cfg <<'EOF'
+GRUB_CMDLINE_LINUX="$GRUB_CMDLINE_LINUX apparmor=1 security=apparmor audit=1"
+EOF
 
-      # Re-generate GRUB configuration.
-      grub-mkconfig -o /boot/grub/grub.cfg
-    elif [ "${use_syslinux}" = "y" ]; then
-      syslinux_append "apparmor=1 security=apparmor audit=1"
-    elif [ "${use_systemd_boot}" = "y" ]; then
-      systemd_boot_append "apparmor=1 security=apparmor audit=1"
-    fi
-  fi
+			# Re-generate GRUB configuration.
+			grub-mkconfig -o /boot/grub/grub.cfg
+		elif [ "${use_syslinux}" = "y" ]; then
+			syslinux_append "apparmor=1 security=apparmor audit=1"
+		elif [ "${use_systemd_boot}" = "y" ]; then
+			systemd_boot_append "apparmor=1 security=apparmor audit=1"
+		fi
+	fi
 }
 
 # Function to add the Chaotic-AUR repository
 add_chaotic_aur() {
-  ## Add the Chaotic-AUR repository
-  read -r -p "Add the Chaotic-AUR repository? (y/n) " add_chaotic_aur
-  if [ "${add_chaotic_aur}" = "y" ]; then
-    pacman-key --recv-key 3056513887B78AEB --keyserver keyserver.ubuntu.com
-    pacman-key --lsign-key 3056513887B78AEB
-    pacman -U --noconfirm 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst'
-    pacman -U --noconfirm 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst'
-    echo -e "\n[chaotic-aur]\nInclude = /etc/pacman.d/chaotic-mirrorlist" | tee -a /etc/pacman.conf
-    pacman -Syu --noconfirm
-  fi
+	## Add the Chaotic-AUR repository
+	read -r -p "Add the Chaotic-AUR repository? (y/n) " add_chaotic_aur
+	if [ "${add_chaotic_aur}" = "y" ]; then
+		pacman-key --recv-key 3056513887B78AEB --keyserver keyserver.ubuntu.com
+		pacman-key --lsign-key 3056513887B78AEB
+		pacman -U --noconfirm 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst'
+		pacman -U --noconfirm 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst'
+		echo -e "\n[chaotic-aur]\nInclude = /etc/pacman.d/chaotic-mirrorlist" | tee -a /etc/pacman.conf
+		pacman -Syu --noconfirm
+	fi
 }
 
 # Function to install AppArmor profiles from Chaotic-AUR
 install_apparmor_d() {
-  ## Install apparmor.d (AppArmor profiles) from Chaotic-AUR.
-  if pacman -Qq apparmor &>/dev/null && grep -q "\[chaotic-aur\]" /etc/pacman.conf; then
-    read -r -p "Install apparmor.d (AppArmor profiles) from Chaotic-AUR? (y/n) " install_apparmor_d
-    if [ "${install_apparmor_d}" = "y" ]; then
-      pacman -S --noconfirm -q apparmor.d-git
+	## Install apparmor.d (AppArmor profiles) from Chaotic-AUR.
+	if pacman -Qq apparmor &>/dev/null && grep -q "\[chaotic-aur\]" /etc/pacman.conf; then
+		read -r -p "Install apparmor.d (AppArmor profiles) from Chaotic-AUR? (y/n) " install_apparmor_d
+		if [ "${install_apparmor_d}" = "y" ]; then
+			pacman -S --noconfirm -q apparmor.d-git
 
-      # Enable fast caching compression of AppArmor profiles.
-      echo 'write-cache' | tee -a /etc/apparmor/parser.conf
-      echo 'Optimize=compress-fast' | tee -a /etc/apparmor/parser.conf
-    fi
-  fi
+			# Enable fast caching compression of AppArmor profiles.
+			echo 'write-cache' | tee -a /etc/apparmor/parser.conf
+			echo 'Optimize=compress-fast' | tee -a /etc/apparmor/parser.conf
+		fi
+	fi
 }
 
 # Function to install bubblewrap
 get_bubblewrap() {
-  ## Bubblewrap
-  read -r -p "Install bubblewrap? (y/n) " install_bubblewrap
-  if [ "${install_bubblewrap}" = "y" ]; then
-    # Installs bubblewrap if it isn't already.
-    if ! pacman -Qq bubblewrap &>/dev/null; then
-      pacman -S --noconfirm -q bubblewrap
-    fi
-  fi
+	## Bubblewrap
+	read -r -p "Install bubblewrap? (y/n) " install_bubblewrap
+	if [ "${install_bubblewrap}" = "y" ]; then
+		# Installs bubblewrap if it isn't already.
+		if ! pacman -Qq bubblewrap &>/dev/null; then
+			pacman -S --noconfirm -q bubblewrap
+		fi
+	fi
 }
 
 # Function to install bubblejail from Chaotic-AUR
 install_bubblejail() {
-  ## Install bubblejail from Chaotic-AUR.
-  if pacman -Qq bubblewrap &>/dev/null && grep -q "\[chaotic-aur\]" /etc/pacman.conf; then
-    read -r -p "Install bubblejail from Chaotic-AUR? (y/n) " install_bubblejail
-    if [ "${install_bubblejail}" = "y" ]; then
-      pacman -S --noconfirm -q bubblejail
-    fi
-  fi
+	## Install bubblejail from Chaotic-AUR.
+	if pacman -Qq bubblewrap &>/dev/null && grep -q "\[chaotic-aur\]" /etc/pacman.conf; then
+		read -r -p "Install bubblejail from Chaotic-AUR? (y/n) " install_bubblejail
+		if [ "${install_bubblejail}" = "y" ]; then
+			pacman -S --noconfirm -q bubblejail
+		fi
+	fi
 }
 
 # Function to install and configure hardened_malloc
 get_hardened_malloc() {
-  ## Install and configure hardened_malloc.
-  if grep -q "\[chaotic-aur\]" /etc/pacman.conf; then
-    read -r -p "Install and configure hardened_malloc? (y/n) " get_hardened_malloc
-    if [ "${get_hardened_malloc}" = "y" ]; then
-      pacman -S --noconfirm -q hardened_malloc
+	## Install and configure hardened_malloc.
+	if grep -q "\[chaotic-aur\]" /etc/pacman.conf; then
+		read -r -p "Install and configure hardened_malloc? (y/n) " get_hardened_malloc
+		if [ "${get_hardened_malloc}" = "y" ]; then
+			pacman -S --noconfirm -q hardened_malloc
 
-      # Set SUID permissions on hardened_malloc
-      chmod u+s /usr/lib/libhardened_malloc.so
+			# Set SUID permissions on hardened_malloc
+			chmod u+s /usr/lib/libhardened_malloc.so
 
-      # Add hardened_malloc to /etc/ld.so.preload
-      if ! grep -q "libhardened_malloc.so" /etc/ld.so.preload; then
-        echo "/usr/lib/libhardened_malloc.so" >> /etc/ld.so.preload
-      fi
+			# Add hardened_malloc to /etc/ld.so.preload
+			if ! grep -q "libhardened_malloc.so" /etc/ld.so.preload; then
+				echo "/usr/lib/libhardened_malloc.so" >>/etc/ld.so.preload
+			fi
 
-      # Raise vm.max_map_count
-      echo "vm.max_map_count = 1048576" > /etc/sysctl.d/hardened_malloc.conf
-    fi
-  fi
+			# Raise vm.max_map_count
+			echo "vm.max_map_count = 1048576" >/etc/sysctl.d/hardened_malloc.conf
+		fi
+	fi
 }
 
 # Function to restrict root access
 restrict_root() {
-  ## Restricting root
-  # Clear /etc/securetty
-  read -r -p "Clear /etc/securetty? (y/n) " securetty
-  if [ "${securetty}" = "y" ]; then
-    echo "" > /etc/securetty
-  fi
+	## Restricting root
+	# Clear /etc/securetty
+	read -r -p "Clear /etc/securetty? (y/n) " securetty
+	if [ "${securetty}" = "y" ]; then
+		echo "" >/etc/securetty
+	fi
 
-  # Restricting su to users in the wheel group.
-  read -r -p "Restrict su to users in the wheel group? (y/n) " restrict_su
-  if [ "${restrict_su}" = "y" ]; then
-    # Restricts su by editing files in /etc/pam.d/
-    sed -i 's/#auth		required	pam_wheel.so use_uid/auth		required	pam_wheel.so use_uid/' /etc/pam.d/su
-    sed -i 's/#auth		required	pam_wheel.so use_uid/auth		required	pam_wheel.so use_uid/' /etc/pam.d/su-l
-  fi
+	# Restricting su to users in the wheel group.
+	read -r -p "Restrict su to users in the wheel group? (y/n) " restrict_su
+	if [ "${restrict_su}" = "y" ]; then
+		# Restricts su by editing files in /etc/pam.d/
+		sed -i 's/#auth		required	pam_wheel.so use_uid/auth		required	pam_wheel.so use_uid/' /etc/pam.d/su
+		sed -i 's/#auth		required	pam_wheel.so use_uid/auth		required	pam_wheel.so use_uid/' /etc/pam.d/su-l
+	fi
 
-  # Lock the root account.
-  read -r -p "Lock the root account? (y/n) " lock_root_account
-  if [ "${lock_root_account}" = "y" ]; then
-    passwd -l root
-  fi
+	# Lock the root account.
+	read -r -p "Lock the root account? (y/n) " lock_root_account
+	if [ "${lock_root_account}" = "y" ]; then
+		passwd -l root
+	fi
 
-  # Checks if SSH is installed before asking.
-  if [ -x "$(command -v ssh)" ]; then
-    # Deny root login via SSH.
-    read -r -p "Deny root login via SSH? (y/n) " deny_root_ssh
-    if [ "${deny_root_ssh}" = "y" ]; then
-      echo 'PermitRootLogin no' >> /etc/ssh/sshd_config
-    fi
-  fi
+	# Checks if SSH is installed before asking.
+	if [ -x "$(command -v ssh)" ]; then
+		# Deny root login via SSH.
+		read -r -p "Deny root login via SSH? (y/n) " deny_root_ssh
+		if [ "${deny_root_ssh}" = "y" ]; then
+			echo 'PermitRootLogin no' >>/etc/ssh/sshd_config
+		fi
+	fi
 }
 
 # Function to install and configure UFW
 firewall() {
-  ## Firewall
-  read -r -p "Install and configure UFW? (y/n) " install_ufw
-  if [ "${install_ufw}" = "y" ]; then
-    # Installs ufw if it isn't already.
-    if ! pacman -Qq ufw &>/dev/null; then
-      pacman -S --noconfirm -q ufw
-    fi
+	## Firewall
+	read -r -p "Install and configure UFW? (y/n) " install_ufw
+	if [ "${install_ufw}" = "y" ]; then
+		# Installs ufw if it isn't already.
+		if ! pacman -Qq ufw &>/dev/null; then
+			pacman -S --noconfirm -q ufw
+		fi
 
-    # Enable UFW.
-    ufw enable
-    systemctl enable --now ufw.service
+		# Enable UFW.
+		ufw enable
+		systemctl enable --now ufw.service
 
-    # Deny all incoming traffic.
-    ufw default deny incoming # Also disables ICMP timestamps
-  fi
+		# Deny all incoming traffic.
+		ufw default deny incoming # Also disables ICMP timestamps
+	fi
 }
 
 # Function to install and configure Tor
 setup_tor() {
-  ## Tor.
-  read -r -p "Do you want to install Tor? (y/n) " install_tor
-  if [ "${install_tor}" = "y" ]; then
-    # Installs Tor if it isn't already.
-    if ! pacman -Qq tor &>/dev/null; then
-      pacman -S --noconfirm -q tor
-    fi
+	## Tor.
+	read -r -p "Do you want to install Tor? (y/n) " install_tor
+	if [ "${install_tor}" = "y" ]; then
+		# Installs Tor if it isn't already.
+		if ! pacman -Qq tor &>/dev/null; then
+			pacman -S --noconfirm -q tor
+		fi
 
-    # Force Pacman through Tor
-    read -r -p "Force pacman through Tor? (y/n) " pacman_tor
-    if [ "${pacman_tor}" = "y" ]; then
-      # Configure a SocksPort for Pacman.
-      echo '''
+		# Force Pacman through Tor
+		read -r -p "Force pacman through Tor? (y/n) " pacman_tor
+		if [ "${pacman_tor}" = "y" ]; then
+			# Configure a SocksPort for Pacman.
+			echo '''
 # Pacman SocksPort
-SocksPort 9062''' >> /etc/tor/torrc
-      sed -i 's/#XferCommand = \/usr\/bin\/curl -L -C - -f -o %o %u/XferCommand = \/usr\/bin\/curl --socks5-hostname localhost:9062 --continue-at - --fail --output %o %u/' /etc/pacman.conf
+SocksPort 9062''' >>/etc/tor/torrc
+			sed -i 's/#XferCommand = \/usr\/bin\/curl -L -C - -f -o %o %u/XferCommand = \/usr\/bin\/curl --socks5-hostname localhost:9062 --continue-at - --fail --output %o %u/' /etc/pacman.conf
 
-      # Only use https mirrors incase of compromised exit nodes.
-      sed -i 's/Server = http:/#Server = http:/' /etc/pacman.d/mirrorlist
-    fi
+			# Only use https mirrors incase of compromised exit nodes.
+			sed -i 's/Server = http:/#Server = http:/' /etc/pacman.d/mirrorlist
+		fi
 
-    # Enables tor systemd service.
-    systemctl enable --now tor.service
-  fi
+		# Enables tor systemd service.
+		systemctl enable --now tor.service
+	fi
 }
 
 # Function to change hostname
 configure_hostname() {
-  ## Change hostname to a generic one.
-  read -r -p "Change hostname to 'host'? (y/n) " hostname
-  if [ "${hostname}" = "y" ]; then
-    hostnamectl set-hostname host
-  fi
+	## Change hostname to a generic one.
+	read -r -p "Change hostname to 'host'? (y/n) " hostname
+	if [ "${hostname}" = "y" ]; then
+		hostnamectl set-hostname host
+	fi
 }
 
 # Function to block wireless devices
 block_wireless_devices() {
-  ## Wireless devices
-  read -r -p "Block all wireless devices with rfkill? (y/n) " block_wireless
-  if [ "${block_wireless}" = "y" ]; then
-    # Uses rfkill to block all wireless devices.
-    rfkill block all
+	## Wireless devices
+	read -r -p "Block all wireless devices with rfkill? (y/n) " block_wireless
+	if [ "${block_wireless}" = "y" ]; then
+		# Uses rfkill to block all wireless devices.
+		rfkill block all
 
-    # Unblock WiFi.
-    read -r -p "Unblock WiFi? (y/n) " unblock_wifi
-    if [ "${unblock_wifi}" = "y" ]; then
-      rfkill unblock wifi
-    fi
+		# Unblock WiFi.
+		read -r -p "Unblock WiFi? (y/n) " unblock_wifi
+		if [ "${unblock_wifi}" = "y" ]; then
+			rfkill unblock wifi
+		fi
 
-    # Blacklist bluetooth kernel module.
-    read -r -p "Blacklist the bluetooth kernel module? (y/n) " blacklist_bluetooth
-    if [ "${blacklist_bluetooth}" = "y" ]; then
-      echo "install btusb /bin/true
-install bluetooth /bin/true" > /etc/modprobe.d/blacklist-bluetooth.conf
-    fi
-  fi
+		# Blacklist bluetooth kernel module.
+		read -r -p "Blacklist the bluetooth kernel module? (y/n) " blacklist_bluetooth
+		if [ "${blacklist_bluetooth}" = "y" ]; then
+			echo "install btusb /bin/true
+install bluetooth /bin/true" >/etc/modprobe.d/blacklist-bluetooth.conf
+		fi
+	fi
 }
 
 # Function to spoof MAC addresses
 mac_address_spoofing() {
-  ## MAC Address Spoofing.
-  read -r -p "Spoof MAC address automatically at boot? (y/n) " spoof_mac_address
-  if [ "${spoof_mac_address}" = "y" ]; then
-    read -r -p "Use macchanger or NetworkManager? " which_mac_spoofer
-    if [ "${which_mac_spoofer}" = "macchanger" ]; then
-      # Installs macchanger if it isn't already.
-      if ! pacman -Qq macchanger &>/dev/null; then
-        pacman -S --noconfirm -q macchanger
-      fi
+	## MAC Address Spoofing.
+	read -r -p "Spoof MAC address automatically at boot? (y/n) " spoof_mac_address
+	if [ "${spoof_mac_address}" = "y" ]; then
+		read -r -p "Use macchanger or NetworkManager? " which_mac_spoofer
+		if [ "${which_mac_spoofer}" = "macchanger" ]; then
+			# Installs macchanger if it isn't already.
+			if ! pacman -Qq macchanger &>/dev/null; then
+				pacman -S --noconfirm -q macchanger
+			fi
 
-      # Get mac spoofing script.
-      mkdir -p /usr/lib/arch-hardening-script
-      cp "$(dirname "$0")/spoof-mac-addresses.bash" /usr/lib/arch-hardening-script/spoof-mac-addresses
+			# Get mac spoofing script.
+			mkdir -p /usr/lib/arch-hardening-script
+			cp "$(dirname "$0")/spoof-mac-addresses.bash" /usr/lib/arch-hardening-script/spoof-mac-addresses
 
-      # Set permissions.
-      chown root:root /usr/lib/arch-hardening-script/spoof-mac-addresses
-      chmod 755 /usr/lib/arch-hardening-script/spoof-mac-addresses
+			# Set permissions.
+			chown root:root /usr/lib/arch-hardening-script/spoof-mac-addresses
+			chmod 755 /usr/lib/arch-hardening-script/spoof-mac-addresses
 
-      # Creates systemd service for MAC spoofing.
-      cat <<EOF > /etc/systemd/system/macspoof.service
+			# Creates systemd service for MAC spoofing.
+			cat <<EOF >/etc/systemd/system/macspoof.service
 [Unit]
 Description=Spoofs MAC addresses
 Wants=network-pre.target
@@ -561,191 +572,199 @@ RestrictNamespaces=true
 WantedBy=multi-user.target
 EOF
 
-      # Enables systemd service.
-      systemctl enable macspoof.service
-    elif [ "${which_mac_spoofer}" = "NetworkManager" ]; then
-      # Installs networkmanager if it isn't already installed.
-      if ! pacman -Qq networkmanager &>/dev/null; then
-        read -r -p "NetworkManager is not installed. Install it now? (y/n) " install_networkmanager
-        if [ "${install_networkmanager}" = "y" ]; then
-          pacman -S --noconfirm -q networkmanager
-        fi
-      fi
+			# Enables systemd service.
+			systemctl enable macspoof.service
+		elif [ "${which_mac_spoofer}" = "NetworkManager" ]; then
+			# Installs networkmanager if it isn't already installed.
+			if ! pacman -Qq networkmanager &>/dev/null; then
+				read -r -p "NetworkManager is not installed. Install it now? (y/n) " install_networkmanager
+				if [ "${install_networkmanager}" = "y" ]; then
+					pacman -S --noconfirm -q networkmanager
+				fi
+			fi
 
-      # Randomize MAC address with networkmanager.
-      cat <<EOF > /etc/NetworkManager/conf.d/rand_mac.conf
+			# Randomize MAC address with networkmanager.
+			cat <<EOF >/etc/NetworkManager/conf.d/rand_mac.conf
 [connection-mac-randomization]
 ethernet.cloned-mac-address=random
 wifi.cloned-mac-address=random
 EOF
-    fi
-  fi
+		fi
+	fi
 }
 
 # Function to set a more restrictive umask
 configure_umask() {
-  ## Set a more restrictive umask.
-  read -r -p "Set a more restrictive umask? (y/n) " umask
-  if [ "${umask}" = "y" ]; then
-    echo "umask 0077" > /etc/profile.d/umask.sh
-  fi
+	## Set a more restrictive umask.
+	read -r -p "Set a more restrictive umask? (y/n) " umask
+	if [ "${umask}" = "y" ]; then
+		echo "umask 0077" >/etc/profile.d/umask.sh
+	fi
 }
 
 # Function to install USBGuard
 install_usbguard() {
-  ## USBGuard.
-  read -r -p "Install USBGuard? (y/n) " usbguard
-  if [ "${usbguard}" = "y" ]; then
-    # Checks if usbguard is already installed.
-    if ! pacman -Qq usbguard &>/dev/null; then
-      # Installs usbguard.
-      pacman -S --noconfirm -q usbguard
-    fi
+	## USBGuard.
+	read -r -p "Install USBGuard? (y/n) " usbguard
+	if [ "${usbguard}" = "y" ]; then
+		# Checks if usbguard is already installed.
+		if ! pacman -Qq usbguard &>/dev/null; then
+			# Installs usbguard.
+			pacman -S --noconfirm -q usbguard
+		fi
 
-    # Enable and start the USBGuard systemd service.
-    systemctl enable --now usbguard.service
-  fi
+		# Enable and start the USBGuard systemd service.
+		systemctl enable --now usbguard.service
+	fi
 }
 
 # Function to blacklist DMA kernel modules
 blacklist_dma() {
-  ## Blacklist thunderbolt and firewire kernel modules.
-  read -r -p "Blacklist Thunderbolt and Firewire? (y/n) " thunderbolt_firewire
-  if [ "${thunderbolt_firewire}" = "y" ]; then
-    echo "install firewire-core /bin/true
-install thunderbolt /bin/true" > /etc/modprobe.d/blacklist-dma.conf
-  fi
+	## Blacklist thunderbolt and firewire kernel modules.
+	read -r -p "Blacklist Thunderbolt and Firewire? (y/n) " thunderbolt_firewire
+	if [ "${thunderbolt_firewire}" = "y" ]; then
+		echo "install firewire-core /bin/true
+install thunderbolt /bin/true" >/etc/modprobe.d/blacklist-dma.conf
+	fi
 }
 
 # Function to disable coredumps
 disable_coredumps() {
-  ## Core Dumps
-  read -r -p "Disable coredumps? (y/n) " coredumps
-  if [ "${coredumps}" = "y" ]; then
-    # Disables coredumps via sysctl.
-    echo "kernel.core_pattern=|/bin/false" > /etc/sysctl.d/disable_coredumps.conf
+	## Core Dumps
+	read -r -p "Disable coredumps? (y/n) " coredumps
+	if [ "${coredumps}" = "y" ]; then
+		# Disables coredumps via sysctl.
+		echo "kernel.core_pattern=|/bin/false" >/etc/sysctl.d/disable_coredumps.conf
 
-    # Make coredump drop-in directory if it doesn't already exist.
-    if ! [ -d /etc/systemd/coredump.conf.d ]; then
-      mkdir /etc/systemd/coredump.conf.d
-    fi
+		# Make coredump drop-in directory if it doesn't already exist.
+		if ! [ -d /etc/systemd/coredump.conf.d ]; then
+			mkdir /etc/systemd/coredump.conf.d
+		fi
 
-    # Disables coredumps via systemd.
-    echo "[Coredump]
-Storage=none" > /etc/systemd/coredump.conf.d/disable_coredumps.conf
+		# Disables coredumps via systemd.
+		echo "[Coredump]
+Storage=none" >/etc/systemd/coredump.conf.d/disable_coredumps.conf
 
-    # Disables coredumps via limits.
-    echo "* hard core 0" >> /etc/security/limits.conf
+		# Disables coredumps via limits.
+		echo "* hard core 0" >>/etc/security/limits.conf
 
-    # Prevents SUID processes from creating coredumps if not already set.
-    if ! sysctl fs.suid_dumpable | grep "0" &>/dev/null; then
-      echo "fs.suid_dumpable=0" > /etc/sysctl.d/suid_dumpable.conf
-    fi
-  fi
+		# Prevents SUID processes from creating coredumps if not already set.
+		if ! sysctl fs.suid_dumpable | grep "0" &>/dev/null; then
+			echo "fs.suid_dumpable=0" >/etc/sysctl.d/suid_dumpable.conf
+		fi
+	fi
 }
 
 # Function to install microcode updates
 microcode_updates() {
-  ## Microcode updates.
-  read -r -p "Install microcode updates? (y/n) " microcode
-  if [ "${microcode}" = "y" ]; then
-    # Checks which CPU is being used.
-    if grep 'AMD' /proc/cpuinfo >/dev/null; then
-      # Install AMD ucode.
-      if ! pacman -Qq amd-ucode &>/dev/null; then
-        pacman -S --noconfirm -q amd-ucode
-      fi
+	## Microcode updates.
+	read -r -p "Install microcode updates? (y/n) " microcode
+	if [ "${microcode}" = "y" ]; then
+		# Checks which CPU is being used.
+		if grep 'AMD' /proc/cpuinfo >/dev/null; then
+			# Install AMD ucode.
+			if ! pacman -Qq amd-ucode &>/dev/null; then
+				pacman -S --noconfirm -q amd-ucode
+			fi
 
-      cpu_manufacturer="amd"
-    elif grep 'Intel' /proc/cpuinfo >/dev/null; then
-      # Install Intel ucode.
-      if ! pacman -Qq intel-ucode &>/dev/null; then
-        pacman -S --noconfirm -q intel-ucode
-      fi
+			cpu_manufacturer="amd"
+		elif grep 'Intel' /proc/cpuinfo >/dev/null; then
+			# Install Intel ucode.
+			if ! pacman -Qq intel-ucode &>/dev/null; then
+				pacman -S --noconfirm -q intel-ucode
+			fi
 
-      cpu_manufacturer="intel"
-    fi
+			cpu_manufacturer="intel"
+		fi
 
-    if [ "${use_grub}" = "y" ]; then
-      # Update GRUB configuration.
-      grub-mkconfig -o /boot/grub/grub.cfg
-    elif [ "${use_syslinux}" = "y" ]; then
-      # Get current initrd configuration.
-      current_initrd=$(grep -v "Fallback" /boot/syslinux/syslinux.cfg | grep -C 3 "MENU LABEL Arch Linux" | grep "INITRD")
+		if [ "${use_grub}" = "y" ]; then
+			# Update GRUB configuration.
+			grub-mkconfig -o /boot/grub/grub.cfg
+		elif [ "${use_syslinux}" = "y" ]; then
+			# Get current initrd configuration.
+			current_initrd=$(grep -v "Fallback" /boot/syslinux/syslinux.cfg | grep -C 3 "MENU LABEL Arch Linux" | grep "INITRD")
 
-      # Update syslinux configuration.
-      sed -i "s|${current_initrd}|${current_initrd},../${cpu_manufacturer}-ucode.img|" /boot/syslinux/syslinux.cfg
-    fi
-  fi
+			# Update syslinux configuration.
+			sed -i "s|${current_initrd}|${current_initrd},../${cpu_manufacturer}-ucode.img|" /boot/syslinux/syslinux.cfg
+		fi
+	fi
 }
 
 # Function to disable NTP
 disable_ntp() {
-  ## NTP
-  read -r -p "Disable NTP? (y/n) " ntp
-  if [ "${ntp}" = "y" ]; then
-    # Uninstalls NTP clients
-    for ntp_client in ntp openntpd ntpclient
-    do
-      if pacman -Qq "${ntp_client}" &>/dev/null; then
-        pacman -Rn --noconfirm ${ntp_client}
-      fi
-    done
+	## NTP
+	read -r -p "Disable NTP? (y/n) " ntp
+	if [ "${ntp}" = "y" ]; then
+		# Uninstalls NTP clients
+		for ntp_client in ntp openntpd ntpclient; do
+			if pacman -Qq "${ntp_client}" &>/dev/null; then
+				pacman -Rn --noconfirm ${ntp_client}
+			fi
+		done
 
-    # Disables NTP
-    timedatectl set-ntp 0
-    systemctl mask systemd-timesyncd.service
-  fi
+		# Disables NTP
+		timedatectl set-ntp 0
+		systemctl mask systemd-timesyncd.service
+	fi
 }
 
 # Function to enable IPv6 privacy extensions
 ipv6_privacy_extensions() {
-  ## IPv6 Privacy Extensions
-  if [ "${disable_ipv6}" != "y" ]; then
-    read -r -p "Do you want to enable IPv6 privacy extensions? (y/n) " ipv6_privacy
-    if [ "${ipv6_privacy}" = "y" ]; then
-      # Enable IPv6 privacy extensions via sysctl.
-      echo "net.ipv6.conf.all.use_tempaddr=2
-net.ipv6.conf.default.use_tempaddr=2" > /etc/sysctl.d/ipv6_privacy.conf
+	## IPv6 Privacy Extensions
+	if [ "${disable_ipv6}" != "y" ]; then
+		read -r -p "Do you want to enable IPv6 privacy extensions? (y/n) " ipv6_privacy
+		if [ "${ipv6_privacy}" = "y" ]; then
+			# Enable IPv6 privacy extensions via sysctl.
+			echo "net.ipv6.conf.all.use_tempaddr=2
+net.ipv6.conf.default.use_tempaddr=2" >/etc/sysctl.d/ipv6_privacy.conf
 
-      # Get list of network interfaces. Excludes loopback and virtual machine interfaces.
-      net_interfaces=$(ls /sys/class/net | grep -v 'lo' | grep -v 'tun0' | grep -v "virbr")
+			# Get list of network interfaces. Excludes loopback and virtual machine interfaces.
+			net_interfaces=""
+			for p in /sys/class/net/*; do
+				[ -e "$p" ] || continue
+				iface=${p##*/}
+				case "$iface" in
+				lo | tun0 | virbr* | docker* | veth*)
+					continue
+					;;
+				esac
+				net_interfaces="$net_interfaces $iface"
+			done
 
-      # Add them to ipv6_privacy.conf.
-      for i in ${net_interfaces}
-      do
-        echo "net.ipv6.conf.${i}.use_tempaddr=2" >> /etc/sysctl.d/ipv6_privacy.conf
-      done
+			# Add them to ipv6_privacy.conf.
+			for i in $net_interfaces; do
+				echo "net.ipv6.conf.${i}.use_tempaddr=2" >>/etc/sysctl.d/ipv6_privacy.conf
+			done
 
-      ## Check for NetworkManager.
-      if pacman -Qq networkmanager &>/dev/null; then
-        # Enable IPv6 privacy extensions for NetworkManager.
-        read -r -p "Enable IPv6 privacy extensions for NetworkManager? (y/n) " networkmanager
-        if [ "${networkmanager}" = "y" ]; then
-          echo "[connection]
-ipv6.ip6-privacy=2" >> /etc/NetworkManager/NetworkManager.conf
-        fi
-      fi
+			## Check for NetworkManager.
+			if pacman -Qq networkmanager &>/dev/null; then
+				# Enable IPv6 privacy extensions for NetworkManager.
+				read -r -p "Enable IPv6 privacy extensions for NetworkManager? (y/n) " networkmanager
+				if [ "${networkmanager}" = "y" ]; then
+					echo "[connection]
+ipv6.ip6-privacy=2" >>/etc/NetworkManager/NetworkManager.conf
+				fi
+			fi
 
-      ## Check for systemd-networkd.
-      if systemctl is-active systemd-networkd.service >/dev/null 2>&1; then
-        # Enable IPv6 privacy extensions for systemd-networkd.
-        read -r -p "Enable IPv6 privacy extensions for systemd-networkd? (y/n) " systemd-networkd
-        if [ "${systemd-networkd}" = "y" ]; then
-          echo "[Network]
-IPv6PrivacyExtensions=kernel" > /etc/systemd/network/ipv6_privacy.conf
-        fi
-      fi
-    fi
-  fi
+			## Check for systemd-networkd.
+			if systemctl is-active systemd-networkd.service >/dev/null 2>&1; then
+				# Enable IPv6 privacy extensions for systemd-networkd.
+				read -r -p "Enable IPv6 privacy extensions for systemd-networkd? (y/n) " systemd-networkd
+				if [ "${systemd-networkd}" = "y" ]; then
+					echo "[Network]
+IPv6PrivacyExtensions=kernel" >/etc/systemd/network/ipv6_privacy.conf
+				fi
+			fi
+		fi
+	fi
 }
 
 # Function to blacklist uncommon network protocols
 blacklist_uncommon_network_protocols() {
-  ## Blacklist uncommon network protocols.
-  read -r -p "Blacklist uncommon network protocols? (y/n) " blacklist_net_protocols
-  if [ "${blacklist_net_protocols}" = "y" ]; then
-    cat <<EOF > /etc/modprobe.d/uncommon-network-protocols.conf
+	## Blacklist uncommon network protocols.
+	read -r -p "Blacklist uncommon network protocols? (y/n) " blacklist_net_protocols
+	if [ "${blacklist_net_protocols}" = "y" ]; then
+		cat <<EOF >/etc/modprobe.d/uncommon-network-protocols.conf
 install dccp /bin/false
 install sctp /bin/false
 install rds /bin/false
@@ -768,15 +787,15 @@ install can /bin/false
 install atm /bin/false
 install vivid /bin/false
 EOF
-  fi
+	fi
 }
 
 # Function to disable mounting of uncommon filesystems
 disable_uncommon_filesystems() {
-  ## Disable mounting of uncommon filesystems.
-  read -r -p "Disable mounting of uncommon filesystems? (y/n) " blacklist_filesystems
-  if [ "${blacklist_filesystems}" = "y" ]; then
-    cat <<EOF > /etc/modprobe.d/uncommon-filesystems.conf
+	## Disable mounting of uncommon filesystems.
+	read -r -p "Disable mounting of uncommon filesystems? (y/n) " blacklist_filesystems
+	if [ "${blacklist_filesystems}" = "y" ]; then
+		cat <<EOF >/etc/modprobe.d/uncommon-filesystems.conf
 install cramfs /bin/false
 install freevxfs /bin/false
 install jffs2 /bin/false
@@ -791,106 +810,105 @@ install nfsv4 /bin/true
 install ksmbd /bin/true
 install gfs2 /bin/true
 EOF
-  fi
+	fi
 }
 
 # Function to gather more entropy
 more_entropy() {
-  ## Gather more entropy.
-  read -r -p "Do you want to gather more entropy? (y/n) " gather_more_entropy
-  if [ "${gather_more_entropy}" = "y" ]; then
-    # Enable haveged.
-    if ! pacman -Qq haveged &>/dev/null; then
-      read -r -p "Do you want to install and enable haveged? (y/n) " enable_haveged
-      if [ "${enable_haveged}" = "y" ]; then
-        pacman -S --noconfirm -q haveged
-        systemctl enable haveged.service
-      fi
-    fi
+	## Gather more entropy.
+	read -r -p "Do you want to gather more entropy? (y/n) " gather_more_entropy
+	if [ "${gather_more_entropy}" = "y" ]; then
+		# Enable haveged.
+		if ! pacman -Qq haveged &>/dev/null; then
+			read -r -p "Do you want to install and enable haveged? (y/n) " enable_haveged
+			if [ "${enable_haveged}" = "y" ]; then
+				pacman -S --noconfirm -q haveged
+				systemctl enable haveged.service
+			fi
+		fi
 
-    # Install jitterentropy.
-    if ! pacman -Qq jitterentropy &>/dev/null; then
-      read -r -p "Do you want to install jitterentropy? (y/n) " install_jitterentropy
-      if [ "${install_jitterentropy}" = "y" ]; then
-        pacman -S --noconfirm -q jitterentropy
-      fi
-    fi
-  fi
+		# Install jitterentropy.
+		if ! pacman -Qq jitterentropy &>/dev/null; then
+			read -r -p "Do you want to install jitterentropy? (y/n) " install_jitterentropy
+			if [ "${install_jitterentropy}" = "y" ]; then
+				pacman -S --noconfirm -q jitterentropy
+			fi
+		fi
+	fi
 }
 
 # Function to block the webcam and microphone
 webcam_and_microphone() {
-  ## Block the webcam and microphone.
-  read -r -p "Do you want to blacklist the webcam kernel module? (y/n) " blacklist_webcam
-  if [ "${blacklist_webcam}" = "y" ]; then
-    # Blacklist the webcam kernel module.
-    echo "install uvcvideo /bin/true" > /etc/modprobe.d/blacklist-webcam.conf
-  fi
+	## Block the webcam and microphone.
+	read -r -p "Do you want to blacklist the webcam kernel module? (y/n) " blacklist_webcam
+	if [ "${blacklist_webcam}" = "y" ]; then
+		# Blacklist the webcam kernel module.
+		echo "install uvcvideo /bin/true" >/etc/modprobe.d/blacklist-webcam.conf
+	fi
 
-  read -r -p "Do you want to blacklist the microphone and speaker kernel module? (y/n) " blacklist_mic
-  if [ "${blacklist_mic}" = "y" ]; then
-    # Blacklist the microphone and speaker kernel module.
-    mic_modules=$(awk '{print $2}' /proc/asound/modules | awk '!x[$0]++')
+	read -r -p "Do you want to blacklist the microphone and speaker kernel module? (y/n) " blacklist_mic
+	if [ "${blacklist_mic}" = "y" ]; then
+		# Blacklist the microphone and speaker kernel module.
+		mic_modules=$(awk '{print $2}' /proc/asound/modules | awk '!x[$0]++')
 
-    # Accounts for multiple sound cards.
-    for i in ${mic_modules}
-    do
-      echo "install ${i} /bin/true" >> /etc/modprobe.d/blacklist-mic.conf
-    done
-  fi
+		# Accounts for multiple sound cards.
+		for i in ${mic_modules}; do
+			echo "install ${i} /bin/true" >>/etc/modprobe.d/blacklist-mic.conf
+		done
+	fi
 }
 
 # Function to question for reboot
 ending() {
-  ## Reboot
-  read -r -p "Reboot to apply all of the changes? (y/n) " reboot
-  if [ "${reboot}" = "y" ]; then
-    reboot
-  fi
+	## Reboot
+	read -r -p "Reboot to apply all of the changes? (y/n) " reboot
+	if [ "${reboot}" = "y" ]; then
+		reboot
+	fi
 }
 
 # Main script execution
 main() {
-  parse_arguments "$@"
-  set_script_options
-  update_system
-  script_checks
-  sysctl_hardening
-  boot_parameter_hardening
-  disable_nf_conntrack_helper
-  install_linux_hardened
-  apparmor
-  add_chaotic_aur
-  install_apparmor_d
-  get_bubblewrap
-  install_bubblejail
-  get_hardened_malloc
-  restrict_root
-  firewall
-  setup_tor
-  configure_hostname
-  block_wireless_devices
-  mac_address_spoofing
-  configure_umask
-  install_usbguard
-  blacklist_dma
-  disable_coredumps
-  microcode_updates
-  disable_ntp
-  ipv6_privacy_extensions
-  blacklist_uncommon_network_protocols
-  disable_uncommon_filesystems
-  more_entropy
-  webcam_and_microphone
-  ending
+	parse_arguments "$@"
+	set_script_options
+	update_system
+	script_checks
+	sysctl_hardening
+	boot_parameter_hardening
+	disable_nf_conntrack_helper
+	install_linux_hardened
+	apparmor
+	add_chaotic_aur
+	install_apparmor_d
+	get_bubblewrap
+	install_bubblejail
+	get_hardened_malloc
+	restrict_root
+	firewall
+	setup_tor
+	configure_hostname
+	block_wireless_devices
+	mac_address_spoofing
+	configure_umask
+	install_usbguard
+	blacklist_dma
+	disable_coredumps
+	microcode_updates
+	disable_ntp
+	ipv6_privacy_extensions
+	blacklist_uncommon_network_protocols
+	disable_uncommon_filesystems
+	more_entropy
+	webcam_and_microphone
+	ending
 }
 
 read -r -p "Start? (y/n) " start
 if [ "${start}" = "n" ]; then
-  exit 1
+	exit 1
 elif ! [ "${start}" = "y" ]; then
-  warn "You did not enter a correct character."
-  exit 1
+	warn "You did not enter a correct character."
+	exit 1
 fi
 
 main "$@"

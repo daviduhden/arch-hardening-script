@@ -1,19 +1,25 @@
 #!/bin/bash
 
-if [[ -z "${ZSH_VERSION:-}" ]] && command -v zsh >/dev/null 2>&1; then
-  exec zsh "$0" "$@"
+if [[ -z ${ZSH_VERSION:-} ]] && command -v zsh >/dev/null 2>&1; then
+	exec zsh "$0" "$@"
 fi
 
 set -euo pipefail
 
-if [[ -t 1 && "${NO_COLOR:-}" != "1" ]]; then
-  GREEN="\033[32m"; YELLOW="\033[33m"; RED="\033[31m"; RESET="\033[0m"
+if [[ -t 1 && ${NO_COLOR:-} != "1" ]]; then
+	GREEN="\033[32m"
+	YELLOW="\033[33m"
+	RED="\033[31m"
+	RESET="\033[0m"
 else
-  GREEN=""; YELLOW=""; RED=""; RESET=""
+	GREEN=""
+	YELLOW=""
+	RED=""
+	RESET=""
 fi
 
-log()   { printf '%s %b[INFO]%b ✅ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$GREEN" "$RESET" "$*"; }
-warn()  { printf '%s %b[WARN]%b ⚠️ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$YELLOW" "$RESET" "$*" >&2; }
+log() { printf '%s %b[INFO]%b ✅ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$GREEN" "$RESET" "$*"; }
+warn() { printf '%s %b[WARN]%b ⚠️ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$YELLOW" "$RESET" "$*" >&2; }
 error() { printf '%s %b[ERROR]%b ❌ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$RED" "$RESET" "$*" >&2; }
 
 # MAC addresses spoofing script for Linux
@@ -35,19 +41,26 @@ error() { printf '%s %b[ERROR]%b ❌ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$RED"
 
 # Function to spoof MAC addresses
 spoof_mac_addresses() {
-  # Get list of network interfaces. Excludes loopback and virtual machine interfaces.
-  interfaces=$(ls /sys/class/net | grep -v 'lo' | grep -v 'tun0' | grep -v "virbr" | grep -v "docker" | grep -v "veth")
+	# Get list of network interfaces. Excludes loopback and virtual machine interfaces.
+	# Use a safe glob/for loop instead of `ls | grep` to handle arbitrary interface names.
+	for p in /sys/class/net/*; do
+		[ -e "$p" ] || continue
+		iface=${p##*/}
+		case "$iface" in
+		lo | tun0 | virbr* | docker* | veth*)
+			continue
+			;;
+		esac
 
-  # Spoof the MAC address of each.
-  for i in ${interfaces}; do
-    ip link set dev "$i" down
-    macchanger -e "$i" >/dev/null || warn "macchanger failed on $i"
-    ip link set dev "$i" up
-  done
+		# Spoof the MAC address of the interface.
+		ip link set dev "$iface" down
+		macchanger -e "$iface" >/dev/null || warn "macchanger failed on $iface"
+		ip link set dev "$iface" up
+	done
 }
 
 main() {
-  spoof_mac_addresses
+	spoof_mac_addresses
 }
 
 main "$@"
