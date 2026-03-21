@@ -1,9 +1,5 @@
 #!/bin/bash
 
-if [[ -z ${ZSH_VERSION:-} ]] && command -v zsh >/dev/null 2>&1; then
-	exec zsh "$0" "$@"
-fi
-
 set -euo pipefail
 
 # Hardening Script for Arch Linux

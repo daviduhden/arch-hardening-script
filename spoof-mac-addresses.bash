@@ -1,9 +1,5 @@
 #!/bin/bash
 
-if [[ -z ${ZSH_VERSION:-} ]] && command -v zsh >/dev/null 2>&1; then
-	exec zsh "$0" "$@"
-fi
-
 set -euo pipefail
 
 if [[ -t 1 && ${NO_COLOR:-} != "1" ]]; then
