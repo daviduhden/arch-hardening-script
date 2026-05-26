@@ -36,6 +36,14 @@ log() { printf '%s %b[INFO]%b ✅ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$GREEN" 
 warn() { printf '%s %b[WARN]%b ⚠️ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$YELLOW" "$RESET" "$*" >&2; }
 error() { printf '%s %b[ERROR]%b ❌ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$RED" "$RESET" "$*" >&2; }
 
+# Function to initialize script options/state
+set_script_options() {
+	disable_checks=0
+	use_grub="n"
+	use_syslinux="n"
+	use_systemd_boot="n"
+}
+
 # Function to parse command-line arguments
 parse_arguments() {
 	while test $# -gt 0; do
@@ -43,10 +51,10 @@ parse_arguments() {
 		--disable-checks)
 			# Disable script_checks.
 			disable_checks=1
-			exit 1
+			shift
 			;;
 		*)
-			error "'${*}' is not a correct flag."
+			error "'$1' is not a correct flag."
 			exit 1
 			;;
 		esac
