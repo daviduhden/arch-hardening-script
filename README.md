@@ -51,7 +51,7 @@ This script is compatible with Arch Linux using GRUB, systemd-boot, or Syslinux 
 
 2. Make the script executable:
     ```sh
-    chmod +x hardening.ksh
+    chmod +x hardening.bash
     ```
 
 3. Run the script:
