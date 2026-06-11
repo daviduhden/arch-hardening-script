@@ -4,7 +4,7 @@ set -euo pipefail
 
 # Hardening Script for Arch Linux
 # Copyright (C) 2019 madaidan
-# Copyright (C) 2025 David Uhden Collado
+# Copyright (C) 2025-2026David Uhden Collado
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
