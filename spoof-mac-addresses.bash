@@ -14,9 +14,15 @@ else
 	RESET=""
 fi
 
-log() { printf '%s %b[INFO]%b ✅ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$GREEN" "$RESET" "$*"; }
-warn() { printf '%s %b[WARN]%b ⚠️ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$YELLOW" "$RESET" "$*" >&2; }
-error() { printf '%s %b[ERROR]%b ❌ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$RED" "$RESET" "$*" >&2; }
+log() { printf \
+	'%s %b[INFO]%b [OK] %s\n' \
+	"$(date '+%Y-%m-%d %H:%M:%S')" "$GREEN" "$RESET" "$*"; }
+warn() { printf \
+	'%s %b[WARN]%b [WARN] %s\n' \
+	"$(date '+%Y-%m-%d %H:%M:%S')" "$YELLOW" "$RESET" "$*" >&2; }
+error() { printf \
+	'%s %b[ERROR]%b [ERROR] %s\n' \
+	"$(date '+%Y-%m-%d %H:%M:%S')" "$RED" "$RESET" "$*" >&2; }
 
 # MAC addresses spoofing script for Linux
 # Copyright (C) 2019 madaidan
@@ -37,8 +43,10 @@ error() { printf '%s %b[ERROR]%b ❌ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$RED"
 
 # Function to spoof MAC addresses
 spoof_mac_addresses() {
-	# Get list of network interfaces. Excludes loopback and virtual machine interfaces.
-	# Use a safe glob/for loop instead of `ls | grep` to handle arbitrary interface names.
+	# Get list of network interfaces.
+	# Excludes loopback and virtual machine interfaces.
+	# Use a safe glob/for loop instead of `ls | grep`
+	# to handle arbitrary interface names.
 	for p in /sys/class/net/*; do
 		[ -e "$p" ] || continue
 		iface=${p##*/}
@@ -50,7 +58,8 @@ spoof_mac_addresses() {
 
 		# Spoof the MAC address of the interface.
 		ip link set dev "$iface" down
-		macchanger -e "$iface" >/dev/null || warn "macchanger failed on $iface"
+		macchanger -e "$iface" >/dev/null \
+			|| warn "macchanger failed on $iface"
 		ip link set dev "$iface" up
 	done
 }
