@@ -70,8 +70,8 @@ parse_arguments() {
 # Function to ensure the script is run as root
 check_root() {
 	if [ "$(id -u)" -ne 0 ]; then
-		error "This script must be run as root. "\
-			"Please run it again with 'sudo' or "\
+		error "This script must be run as root. " \
+			"Please run it again with 'sudo' or " \
 			"as the root user."
 		exit 1
 	fi
@@ -150,15 +150,15 @@ script_checks() {
 
 			if ! grep "MENU LABEL Arch Linux" \
 				/boot/syslinux/syslinux.cfg >/dev/null; then
-				error "The 'Arch Linux' menu label is "\
-					"missing from your Syslinux "\
+				error "The 'Arch Linux' menu label is " \
+					"missing from your Syslinux " \
 					"configuration file."
 				exit 1
 			fi
 		elif [ -d /boot/loader ]; then
 			use_systemd_boot="y"
 		else
-			error "This script can only be used "\
+			error "This script can only be used " \
 				"with GRUB, syslinux, or systemd-boot."
 			exit 1
 		fi
@@ -252,7 +252,7 @@ fs.protected_regular=2" >/etc/sysctl.d/protected_files.conf
 # Function to harden the kernel through boot parameters
 boot_parameter_hardening() {
 	## Boot Parameters.
-	read -r -p "Harden the kernel through "\
+	read -r -p "Harden the kernel through " \
 		"boot parameters? (y/n) " bootparams
 	if [ "${bootparams}" = "y" ]; then
 		# Define the boot parameters.
@@ -296,7 +296,7 @@ EOF
 # Function to disable Netfilter connection tracking helper
 disable_nf_conntrack_helper() {
 	## Disable Netfilter connection tracking helper.
-	read -r -p "Disable the Netfilter automatic "\
+	read -r -p "Disable the Netfilter automatic " \
 		"conntrack helper assignment? (y/n) " \
 		disable_conntrack_helper
 	if [ "${disable_conntrack_helper}" = "y" ]; then
@@ -316,8 +316,8 @@ install_linux_hardened() {
 		# Enable linux-hardened in GRUB.
 		if [ "${use_grub}" = "y" ]; then
 			# Set default boot entry to linux-hardened.
-			sed -i 's/GRUB_DEFAULT=.*/GRUB_DEFAULT="Advanced '\
-				'options for Arch Linux>Arch Linux, '\
+			sed -i 's/GRUB_DEFAULT=.*/GRUB_DEFAULT="Advanced ' \
+				'options for Arch Linux>Arch Linux, ' \
 				'with Linux linux-hardened"/' \
 				/etc/default/grub
 			grub-mkconfig -o /boot/grub/grub.cfg
@@ -387,14 +387,14 @@ add_chaotic_aur() {
 			--keyserver keyserver.ubuntu.com
 		pacman-key --lsign-key 3056513887B78AEB
 		pacman -U --noconfirm \
-			'https://cdn-mirror.chaotic.cx/chaotic-aur/'\
+			'https://cdn-mirror.chaotic.cx/chaotic-aur/' \
 			'chaotic-keyring.pkg.tar.zst'
 		pacman -U --noconfirm \
-			'https://cdn-mirror.chaotic.cx/chaotic-aur/'\
+			'https://cdn-mirror.chaotic.cx/chaotic-aur/' \
 			'chaotic-mirrorlist.pkg.tar.zst'
 		printf '\n%s\n%s\n' '[chaotic-aur]' \
-			'Include = /etc/pacman.d/chaotic-mirrorlist' \
-			| tee -a /etc/pacman.conf
+			'Include = /etc/pacman.d/chaotic-mirrorlist' |
+			tee -a /etc/pacman.conf
 		pacman -Syu --noconfirm
 	fi
 }
@@ -402,9 +402,9 @@ add_chaotic_aur() {
 # Function to install AppArmor profiles from Chaotic-AUR
 install_apparmor_d() {
 	## Install apparmor.d (AppArmor profiles) from Chaotic-AUR.
-	if pacman -Qq apparmor &>/dev/null && \
+	if pacman -Qq apparmor &>/dev/null &&
 		grep -q "\[chaotic-aur\]" /etc/pacman.conf; then
-		read -r -p "Install apparmor.d (AppArmor profiles) "\
+		read -r -p "Install apparmor.d (AppArmor profiles) " \
 			"from Chaotic-AUR? (y/n) " install_apparmor_d
 		if [ "${install_apparmor_d}" = "y" ]; then
 			pacman -S --noconfirm -q apparmor.d-git
@@ -431,9 +431,9 @@ get_bubblewrap() {
 # Function to install bubblejail from Chaotic-AUR
 install_bubblejail() {
 	## Install bubblejail from Chaotic-AUR.
-	if pacman -Qq bubblewrap &>/dev/null && \
+	if pacman -Qq bubblewrap &>/dev/null &&
 		grep -q "\[chaotic-aur\]" /etc/pacman.conf; then
-		read -r -p "Install bubblejail from "\
+		read -r -p "Install bubblejail from " \
 			"Chaotic-AUR? (y/n) " install_bubblejail
 		if [ "${install_bubblejail}" = "y" ]; then
 			pacman -S --noconfirm -q bubblejail
@@ -445,7 +445,7 @@ install_bubblejail() {
 get_hardened_malloc() {
 	## Install and configure hardened_malloc.
 	if grep -q "\[chaotic-aur\]" /etc/pacman.conf; then
-		read -r -p "Install and configure "\
+		read -r -p "Install and configure " \
 			"hardened_malloc? (y/n) " get_hardened_malloc
 		if [ "${get_hardened_malloc}" = "y" ]; then
 			pacman -S --noconfirm -q hardened_malloc
@@ -474,13 +474,13 @@ restrict_root() {
 	fi
 
 	# Restricting su to users in the wheel group.
-	read -r -p "Restrict su to users in "\
+	read -r -p "Restrict su to users in " \
 		"the wheel group? (y/n) " restrict_su
 	if [ "${restrict_su}" = "y" ]; then
 		# Restricts su by editing files in /etc/pam.d/
-		sed -i 's/#auth		required	pam_wheel.so use_uid/'\
+		sed -i 's/#auth		required	pam_wheel.so use_uid/' \
 			'auth		required	pam_wheel.so use_uid/' /etc/pam.d/su
-		sed -i 's/#auth		required	pam_wheel.so use_uid/'\
+		sed -i 's/#auth		required	pam_wheel.so use_uid/' \
 			'auth		required	pam_wheel.so use_uid/' /etc/pam.d/su-l
 	fi
 
@@ -536,10 +536,10 @@ setup_tor() {
 			echo '''
 # Pacman SocksPort
 SocksPort 9062''' >>/etc/tor/torrc
-			sed -i 's/#XferCommand = \/usr\/bin\/curl '\
-				'-L -C - -f -o %o %u/'\
-				'XferCommand = \/usr\/bin\/curl '\
-				'--socks5-hostname localhost:9062 '\
+			sed -i 's/#XferCommand = \/usr\/bin\/curl ' \
+				'-L -C - -f -o %o %u/' \
+				'XferCommand = \/usr\/bin\/curl ' \
+				'--socks5-hostname localhost:9062 ' \
 				'--continue-at - --fail --output %o %u/' \
 				/etc/pacman.conf
 
@@ -564,7 +564,7 @@ configure_hostname() {
 # Function to block wireless devices
 block_wireless_devices() {
 	## Wireless devices
-	read -r -p "Block all wireless devices "\
+	read -r -p "Block all wireless devices " \
 		"with rfkill? (y/n) " block_wireless
 	if [ "${block_wireless}" = "y" ]; then
 		# Uses rfkill to block all wireless devices.
@@ -577,7 +577,7 @@ block_wireless_devices() {
 		fi
 
 		# Blacklist bluetooth kernel module.
-		read -r -p "Blacklist the bluetooth kernel "\
+		read -r -p "Blacklist the bluetooth kernel " \
 			"module? (y/n) " blacklist_bluetooth
 		if [ "${blacklist_bluetooth}" = "y" ]; then
 			echo "install btusb /bin/true
@@ -589,7 +589,7 @@ install bluetooth /bin/true" >/etc/modprobe.d/blacklist-bluetooth.conf
 # Function to spoof MAC addresses
 mac_address_spoofing() {
 	## MAC Address Spoofing.
-	read -r -p "Spoof MAC address automatically "\
+	read -r -p "Spoof MAC address automatically " \
 		"at boot? (y/n) " spoof_mac_address
 	if [ "${spoof_mac_address}" = "y" ]; then
 		read -r -p "Use macchanger or NetworkManager? " \
@@ -642,7 +642,7 @@ EOF
 		elif [ "${which_mac_spoofer}" = "NetworkManager" ]; then
 			# Installs networkmanager if it isn't already installed.
 			if ! pacman -Qq networkmanager &>/dev/null; then
-				read -r -p "NetworkManager is not installed. "\
+				read -r -p "NetworkManager is not installed. " \
 					"Install it now? (y/n) " install_networkmanager
 				if [ "${install_networkmanager}" = "y" ]; then
 					pacman -S --noconfirm -q networkmanager
@@ -687,7 +687,7 @@ install_usbguard() {
 # Function to blacklist DMA kernel modules
 blacklist_dma() {
 	## Blacklist thunderbolt and firewire kernel modules.
-	read -r -p "Blacklist Thunderbolt and "\
+	read -r -p "Blacklist Thunderbolt and " \
 		"Firewire? (y/n) " thunderbolt_firewire
 	if [ "${thunderbolt_firewire}" = "y" ]; then
 		echo "install firewire-core /bin/true
@@ -784,7 +784,7 @@ disable_ntp() {
 ipv6_privacy_extensions() {
 	## IPv6 Privacy Extensions
 	if [ "${disable_ipv6}" != "y" ]; then
-		read -r -p "Do you want to enable IPv6 "\
+		read -r -p "Do you want to enable IPv6 " \
 			"privacy extensions? (y/n) " ipv6_privacy
 		if [ "${ipv6_privacy}" = "y" ]; then
 			# Enable IPv6 privacy extensions via sysctl.
@@ -814,7 +814,7 @@ net.ipv6.conf.default.use_tempaddr=2" >/etc/sysctl.d/ipv6_privacy.conf
 			## Check for NetworkManager.
 			if pacman -Qq networkmanager &>/dev/null; then
 				# Enable IPv6 privacy extensions for NetworkManager.
-				read -r -p "Enable IPv6 privacy extensions "\
+				read -r -p "Enable IPv6 privacy extensions " \
 					"for NetworkManager? (y/n) " networkmanager
 				if [ "${networkmanager}" = "y" ]; then
 					echo "[connection]
@@ -825,7 +825,7 @@ ipv6.ip6-privacy=2" >>/etc/NetworkManager/NetworkManager.conf
 			## Check for systemd-networkd.
 			if systemctl is-active systemd-networkd.service >/dev/null 2>&1; then
 				# Enable IPv6 privacy extensions for systemd-networkd.
-				read -r -p "Enable IPv6 privacy extensions "\
+				read -r -p "Enable IPv6 privacy extensions " \
 					"for systemd-networkd? (y/n) " systemd-networkd
 				if [ "${systemd-networkd}" = "y" ]; then
 					echo "[Network]
@@ -839,7 +839,7 @@ IPv6PrivacyExtensions=kernel" >/etc/systemd/network/ipv6_privacy.conf
 # Function to blacklist uncommon network protocols
 blacklist_uncommon_network_protocols() {
 	## Blacklist uncommon network protocols.
-	read -r -p "Blacklist uncommon network "\
+	read -r -p "Blacklist uncommon network " \
 		"protocols? (y/n) " blacklist_net_protocols
 	if [ "${blacklist_net_protocols}" = "y" ]; then
 		cat <<EOF >/etc/modprobe.d/uncommon-network-protocols.conf
@@ -871,7 +871,7 @@ EOF
 # Function to disable mounting of uncommon filesystems
 disable_uncommon_filesystems() {
 	## Disable mounting of uncommon filesystems.
-	read -r -p "Disable mounting of uncommon "\
+	read -r -p "Disable mounting of uncommon " \
 		"filesystems? (y/n) " blacklist_filesystems
 	if [ "${blacklist_filesystems}" = "y" ]; then
 		cat <<EOF >/etc/modprobe.d/uncommon-filesystems.conf
@@ -895,12 +895,12 @@ EOF
 # Function to gather more entropy
 more_entropy() {
 	## Gather more entropy.
-	read -r -p "Do you want to gather more "\
+	read -r -p "Do you want to gather more " \
 		"entropy? (y/n) " gather_more_entropy
 	if [ "${gather_more_entropy}" = "y" ]; then
 		# Enable haveged.
 		if ! pacman -Qq haveged &>/dev/null; then
-			read -r -p "Do you want to install and "\
+			read -r -p "Do you want to install and " \
 				"enable haveged? (y/n) " enable_haveged
 			if [ "${enable_haveged}" = "y" ]; then
 				pacman -S --noconfirm -q haveged
@@ -910,7 +910,7 @@ more_entropy() {
 
 		# Install jitterentropy.
 		if ! pacman -Qq jitterentropy &>/dev/null; then
-			read -r -p "Do you want to install "\
+			read -r -p "Do you want to install " \
 				"jitterentropy? (y/n) " install_jitterentropy
 			if [ "${install_jitterentropy}" = "y" ]; then
 				pacman -S --noconfirm -q jitterentropy
@@ -922,7 +922,7 @@ more_entropy() {
 # Function to block the webcam and microphone
 webcam_and_microphone() {
 	## Block the webcam and microphone.
-	read -r -p "Do you want to blacklist the "\
+	read -r -p "Do you want to blacklist the " \
 		"webcam kernel module? (y/n) " blacklist_webcam
 	if [ "${blacklist_webcam}" = "y" ]; then
 		# Blacklist the webcam kernel module.
@@ -930,7 +930,7 @@ webcam_and_microphone() {
 			>/etc/modprobe.d/blacklist-webcam.conf
 	fi
 
-	read -r -p "Do you want to blacklist the microphone and "\
+	read -r -p "Do you want to blacklist the microphone and " \
 		"speaker kernel module? (y/n) " blacklist_mic
 	if [ "${blacklist_mic}" = "y" ]; then
 		# Blacklist the microphone and speaker kernel module.

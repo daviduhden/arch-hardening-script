@@ -58,8 +58,8 @@ spoof_mac_addresses() {
 
 		# Spoof the MAC address of the interface.
 		ip link set dev "$iface" down
-		macchanger -e "$iface" >/dev/null \
-			|| warn "macchanger failed on $iface"
+		macchanger -e "$iface" >/dev/null ||
+			warn "macchanger failed on $iface"
 		ip link set dev "$iface" up
 	done
 }
