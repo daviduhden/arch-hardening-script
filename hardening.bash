@@ -70,14 +70,14 @@ svc_enable() {
 	local svc="$1"
 	case "$init_system" in
 	"$INIT_SYSTEMD") systemctl enable "$svc" ;;
-	"$INIT_OPENRC")  rc-update add "$svc" default ;;
+	"$INIT_OPENRC") rc-update add "$svc" default ;;
 	"$INIT_RUNIT")
 		[ -d "/run/runit/service" ] && ln -sf "/etc/runit/sv/$svc" "/run/runit/service/$svc" 2>/dev/null
-		[ -d "/var/service" ]       && ln -sf "/etc/sv/$svc" "/var/service/$svc" 2>/dev/null
+		[ -d "/var/service" ] && ln -sf "/etc/sv/$svc" "/var/service/$svc" 2>/dev/null
 		;;
-	"$INIT_S6")  s6-rc-bundle add default "$svc" 2>/dev/null || true ;;
+	"$INIT_S6") s6-rc-bundle add default "$svc" 2>/dev/null || true ;;
 	"$INIT_DINIT") dinitctl enable "$svc" 2>/dev/null || true ;;
-	*)               warn "Unknown init system: cannot enable $svc" ;;
+	*) warn "Unknown init system: cannot enable $svc" ;;
 	esac
 }
 
@@ -85,14 +85,17 @@ svc_enable_now() {
 	local svc="$1"
 	case "$init_system" in
 	"$INIT_SYSTEMD") systemctl enable --now "$svc" ;;
-	"$INIT_OPENRC")  rc-update add "$svc" default && rc-service "$svc" start ;;
+	"$INIT_OPENRC") rc-update add "$svc" default && rc-service "$svc" start ;;
 	"$INIT_RUNIT")
 		svc_enable "$svc"
 		sv start "$svc" 2>/dev/null || true
 		;;
-	"$INIT_S6")     s6-rc-bundle add default "$svc" 2>/dev/null; s6-rc -u change "$svc" 2>/dev/null || true ;;
-	"$INIT_DINIT")  dinitctl enable "$svc" 2>/dev/null && dinitctl start "$svc" 2>/dev/null || true ;;
-	*)              warn "Unknown init system: cannot enable/start $svc" ;;
+	"$INIT_S6")
+		s6-rc-bundle add default "$svc" 2>/dev/null
+		s6-rc -u change "$svc" 2>/dev/null || true
+		;;
+	"$INIT_DINIT") dinitctl enable "$svc" 2>/dev/null && dinitctl start "$svc" 2>/dev/null || true ;;
+	*) warn "Unknown init system: cannot enable/start $svc" ;;
 	esac
 }
 
@@ -100,26 +103,35 @@ svc_mask() {
 	local svc="$1"
 	case "$init_system" in
 	"$INIT_SYSTEMD") systemctl mask "$svc" ;;
-	"$INIT_OPENRC")  rc-service "$svc" stop 2>/dev/null; rc-update del "$svc" 2>/dev/null || true ;;
+	"$INIT_OPENRC")
+		rc-service "$svc" stop 2>/dev/null
+		rc-update del "$svc" 2>/dev/null || true
+		;;
 	"$INIT_RUNIT")
 		sv stop "$svc" 2>/dev/null
 		rm -f "/run/runit/service/$svc" "/var/service/$svc" 2>/dev/null
 		;;
-	"$INIT_S6")     s6-rc -d change "$svc" 2>/dev/null; s6-rc-bundle delete default "$svc" 2>/dev/null || true ;;
-	"$INIT_DINIT")  dinitctl stop "$svc" 2>/dev/null; dinitctl disable "$svc" 2>/dev/null || true ;;
-	*)              warn "Cannot mask service '$svc' on $init_system; best-effort disable"
-		esac
+	"$INIT_S6")
+		s6-rc -d change "$svc" 2>/dev/null
+		s6-rc-bundle delete default "$svc" 2>/dev/null || true
+		;;
+	"$INIT_DINIT")
+		dinitctl stop "$svc" 2>/dev/null
+		dinitctl disable "$svc" 2>/dev/null || true
+		;;
+	*) warn "Cannot mask service '$svc' on $init_system; best-effort disable" ;;
+	esac
 }
 
 svc_is_active() {
 	local svc="$1"
 	case "$init_system" in
 	"$INIT_SYSTEMD") systemctl is-active --quiet "$svc" ;;
-	"$INIT_OPENRC")  rc-service "$svc" status >/dev/null 2>&1 ;;
-	"$INIT_RUNIT")   sv status "$svc" >/dev/null 2>&1 ;;
-	"$INIT_S6")      s6-rc -u status "$svc" >/dev/null 2>&1 ;;
-	"$INIT_DINIT")   dinitctl status "$svc" >/dev/null 2>&1 ;;
-	*)               false ;;
+	"$INIT_OPENRC") rc-service "$svc" status >/dev/null 2>&1 ;;
+	"$INIT_RUNIT") sv status "$svc" >/dev/null 2>&1 ;;
+	"$INIT_S6") s6-rc -u status "$svc" >/dev/null 2>&1 ;;
+	"$INIT_DINIT") dinitctl status "$svc" >/dev/null 2>&1 ;;
+	*) false ;;
 	esac
 }
 
@@ -160,7 +172,7 @@ parse_arguments() {
 			disable_checks=1
 			shift
 			;;
-		--help|-h)
+		--help | -h)
 			cat <<EOF
 Usage: ${0##*/} [OPTIONS]
 
@@ -274,8 +286,8 @@ script_checks() {
 		fi
 
 		# systemd-boot only works with systemd.
-		if [ "$init_system" != "$INIT_SYSTEMD" ] \
-			&& [ "${use_systemd_boot}" = "y" ]; then
+		if [ "$init_system" != "$INIT_SYSTEMD" ] &&
+			[ "${use_systemd_boot}" = "y" ]; then
 			warn "systemd-boot requires systemd." \
 				"Bootloader features limited."
 		fi
@@ -665,11 +677,11 @@ setup_tor() {
 		read -r -p "Force pacman through Tor? (y/n) " pacman_tor
 		if [ "${pacman_tor}" = "y" ]; then
 			# Configure a SocksPort for Pacman.
-		if ! grep -qF 'SocksPort 9062' /etc/tor/torrc 2>/dev/null; then
-			echo '''
+			if ! grep -qF 'SocksPort 9062' /etc/tor/torrc 2>/dev/null; then
+				echo '''
 # Pacman SocksPort
 SocksPort 9062''' >>/etc/tor/torrc
-		fi
+			fi
 			sed -i 's/#XferCommand = \/usr\/bin\/curl ' \
 				'-L -C - -f -o %o %u/' \
 				'XferCommand = \/usr\/bin\/curl ' \
@@ -1005,8 +1017,8 @@ ipv6.ip6-privacy=2" >>/etc/NetworkManager/NetworkManager.conf
 			fi
 
 			## Check for systemd-networkd (systemd only).
-			if [ "$init_system" = "$INIT_SYSTEMD" ] \
-				&& svc_is_active systemd-networkd.service; then
+			if [ "$init_system" = "$INIT_SYSTEMD" ] &&
+				svc_is_active systemd-networkd.service; then
 				# Enable IPv6 privacy extensions for systemd-networkd.
 				read -r -p "Enable IPv6 privacy extensions " \
 					"for systemd-networkd? (y/n) " systemd_networkd
