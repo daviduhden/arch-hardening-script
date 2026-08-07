@@ -1,15 +1,15 @@
-# Arch Hardening Script
+# Arch / Artix Hardening Script
 
 ## Overview
 
-This script enhances the privacy and security of Arch Linux. Any contribution is highly appreciated.
+This script enhances the privacy and security of Arch Linux and Artix Linux. Any contribution is highly appreciated.
 
 **WARNING:** It is highly recommended to read and understand the guide before running this script. Do not execute commands you do not understand, as this may lead to unexpected errors. This script alone is not sufficient for complete security. Security requires ongoing efforts such as maintaining AppArmor profiles and practicing good security habits.
 
 ## Features
 
 - Harden the kernel using sysctl and boot parameters.
-- Disable IPv6 to reduce the attack surface.
+- Optionally disable IPv6 to reduce the attack surface.
 - Disable the potentially dangerous Netfilter automatic conntrack helper assignment.
 - Install `linux-hardened`.
 - Enable AppArmor.
@@ -19,11 +19,11 @@ This script enhances the privacy and security of Arch Linux. Any contribution is
 - Install Bubblejail.
 - Install and configure `hardened_malloc` for improved memory safety.
 - Restrict root access.
-- Install and configure UFW as a firewall.
+- Install and configure nftables as a firewall with a default-deny inbound policy.
 - Set up Tor.
 - Change the hostname to a generic one such as `host`.
 - Block all wireless devices with `rfkill` and blacklist the Bluetooth kernel modules.
-- Create a systemd service to spoof the MAC address at boot.
+- Create an init service to spoof the MAC address at boot (systemd or OpenRC).
 - Use a more restrictive umask.
 - Install usbguard to blacklist USB devices.
 - Blacklist Thunderbolt and Firewire to prevent DMA attacks.
@@ -38,26 +38,35 @@ This script enhances the privacy and security of Arch Linux. Any contribution is
 
 All features are optional, and you will be asked to enable or disable each one during the script execution.
 
-This script is compatible with Arch Linux using GRUB, systemd-boot, or Syslinux as the bootloader and systemd as the init system. To disable any checks, run the script with the `--disable-checks` flag.
+## Compatibility
+
+| Component     | Supported                                      |
+|---------------|------------------------------------------------|
+| Distribution  | Arch Linux, Artix Linux                        |
+| Bootloader    | GRUB, systemd-boot, Syslinux                   |
+| Init system   | systemd, OpenRC, runit, s6, dinit              |
+
+**Note:** systemd-boot requires systemd as the init system. On non-systemd setups with systemd-boot detected, bootloader features will be limited and a warning is shown.
 
 ## Usage
 
-1. Clone or download this repository:
+### Quick Start
 
-    ```sh
-    git clone https://github.com/daviduhden/arch-hardening-script.git
-    cd arch-hardening-script
-    ```
+```sh
+git clone https://github.com/daviduhden/arch-hardening-script.git
+cd arch-hardening-script
+chmod +x hardening.bash
+sudo bash hardening.bash
+```
 
-2. Make the script executable:
-    ```sh
-    chmod +x hardening.bash
-    ```
+### Options
 
-3. Run the script:
+| Flag                | Description                                      |
+|---------------------|--------------------------------------------------|
+| `--help`, `-h`      | Show the help message.                           |
+| `--disable-checks`  | Skip system compatibility checks. Only for       |
+|                     | advanced users who know what they are doing.     |
 
-    ```sh
-    bash hardening.bash
-    ```
+### Interactive Prompts
 
-4. Follow the interactive questions to apply the desired configurations.
+Each hardening measure requires a `(y/n)` confirmation. Answer `y` to apply, `n` to skip, or `Ctrl-C` to abort the script. You will be asked to reboot at the end to apply all changes.

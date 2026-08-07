@@ -42,9 +42,110 @@ error() { printf \
 	'%s %b[ERROR]%b [ERROR] %s\n' \
 	"$(date '+%Y-%m-%d %H:%M:%S')" "$RED" "$RESET" "$*" >&2; }
 
+# ---- Init system detection and service management ----
+
+INIT_SYSTEMD="systemd"
+INIT_OPENRC="openrc"
+INIT_RUNIT="runit"
+INIT_S6="s6"
+INIT_DINIT="dinit"
+
+detect_init_system() {
+	if [ -d /run/systemd/system ] || systemctl >/dev/null 2>&1; then
+		init_system="$INIT_SYSTEMD"
+	elif [ -d /run/openrc ] || rc-status >/dev/null 2>&1; then
+		init_system="$INIT_OPENRC"
+	elif [ -d /run/runit ] || [ -d /etc/runit ]; then
+		init_system="$INIT_RUNIT"
+	elif pidof s6-svscan >/dev/null 2>&1 || [ -d /etc/s6 ]; then
+		init_system="$INIT_S6"
+	elif command -v dinit >/dev/null 2>&1 || [ -d /etc/dinit.d ]; then
+		init_system="$INIT_DINIT"
+	else
+		init_system="unknown"
+	fi
+}
+
+svc_enable() {
+	local svc="$1"
+	case "$init_system" in
+	"$INIT_SYSTEMD") systemctl enable "$svc" ;;
+	"$INIT_OPENRC")  rc-update add "$svc" default ;;
+	"$INIT_RUNIT")
+		[ -d "/run/runit/service" ] && ln -sf "/etc/runit/sv/$svc" "/run/runit/service/$svc" 2>/dev/null
+		[ -d "/var/service" ]       && ln -sf "/etc/sv/$svc" "/var/service/$svc" 2>/dev/null
+		;;
+	"$INIT_S6")  s6-rc-bundle add default "$svc" 2>/dev/null || true ;;
+	"$INIT_DINIT") dinitctl enable "$svc" 2>/dev/null || true ;;
+	*)               warn "Unknown init system: cannot enable $svc" ;;
+	esac
+}
+
+svc_enable_now() {
+	local svc="$1"
+	case "$init_system" in
+	"$INIT_SYSTEMD") systemctl enable --now "$svc" ;;
+	"$INIT_OPENRC")  rc-update add "$svc" default && rc-service "$svc" start ;;
+	"$INIT_RUNIT")
+		svc_enable "$svc"
+		sv start "$svc" 2>/dev/null || true
+		;;
+	"$INIT_S6")     s6-rc-bundle add default "$svc" 2>/dev/null; s6-rc -u change "$svc" 2>/dev/null || true ;;
+	"$INIT_DINIT")  dinitctl enable "$svc" 2>/dev/null && dinitctl start "$svc" 2>/dev/null || true ;;
+	*)              warn "Unknown init system: cannot enable/start $svc" ;;
+	esac
+}
+
+svc_mask() {
+	local svc="$1"
+	case "$init_system" in
+	"$INIT_SYSTEMD") systemctl mask "$svc" ;;
+	"$INIT_OPENRC")  rc-service "$svc" stop 2>/dev/null; rc-update del "$svc" 2>/dev/null || true ;;
+	"$INIT_RUNIT")
+		sv stop "$svc" 2>/dev/null
+		rm -f "/run/runit/service/$svc" "/var/service/$svc" 2>/dev/null
+		;;
+	"$INIT_S6")     s6-rc -d change "$svc" 2>/dev/null; s6-rc-bundle delete default "$svc" 2>/dev/null || true ;;
+	"$INIT_DINIT")  dinitctl stop "$svc" 2>/dev/null; dinitctl disable "$svc" 2>/dev/null || true ;;
+	*)              warn "Cannot mask service '$svc' on $init_system; best-effort disable"
+		esac
+}
+
+svc_is_active() {
+	local svc="$1"
+	case "$init_system" in
+	"$INIT_SYSTEMD") systemctl is-active --quiet "$svc" ;;
+	"$INIT_OPENRC")  rc-service "$svc" status >/dev/null 2>&1 ;;
+	"$INIT_RUNIT")   sv status "$svc" >/dev/null 2>&1 ;;
+	"$INIT_S6")      s6-rc -u status "$svc" >/dev/null 2>&1 ;;
+	"$INIT_DINIT")   dinitctl status "$svc" >/dev/null 2>&1 ;;
+	*)               false ;;
+	esac
+}
+
+set_hostname_cmd() {
+	local name="$1"
+	if [ "$init_system" = "$INIT_SYSTEMD" ]; then
+		hostnamectl set-hostname "$name"
+	else
+		echo "$name" >/etc/hostname
+		command -v hostname >/dev/null 2>&1 && hostname "$name" || true
+	fi
+}
+
+disable_ntp_system() {
+	if [ "$init_system" = "$INIT_SYSTEMD" ]; then
+		timedatectl set-ntp 0
+	fi
+}
+
+# ---- End init system abstraction ----
+
 # Function to initialize script options/state
 set_script_options() {
 	disable_checks=0
+	disable_ipv6="n"
+	init_system=""
 	use_grub="n"
 	use_syslinux="n"
 	use_systemd_boot="n"
@@ -58,6 +159,19 @@ parse_arguments() {
 			# Disable script_checks.
 			disable_checks=1
 			shift
+			;;
+		--help|-h)
+			cat <<EOF
+Usage: ${0##*/} [OPTIONS]
+
+Arch/Artix Linux hardening script.
+
+Options:
+  --disable-checks  Skip system compatibility checks
+                    (only for advanced users).
+  --help, -h        Show this help message.
+EOF
+			exit 0
 			;;
 		*)
 			error "'$1' is not a correct flag."
@@ -79,8 +193,12 @@ check_root() {
 
 # Function to update the system
 update_system() {
-	log "Updating the system..."
-	pacman -Syu --noconfirm --needed
+	read -r -p "Update the system (pacman -Syu) before " \
+		"hardening? (y/n) " update_system_prompt
+	if [ "${update_system_prompt}" = "y" ]; then
+		log "Updating the system..."
+		pacman -Syu --noconfirm --needed
+	fi
 }
 
 # Function to create GRUB directory
@@ -88,8 +206,10 @@ create_grub_directory() {
 	# Create /etc/default/grub.d if it doesn't already exist.
 	if ! [ -d /etc/default/grub.d ]; then
 		mkdir -m 755 /etc/default/grub.d
+	fi
 
-		# Make /etc/default/grub source grub.d.
+	# Make /etc/default/grub source grub.d if not already configured.
+	if ! grep -qF '/etc/default/grub.d/*.cfg' /etc/default/grub 2>/dev/null; then
 		cat >>/etc/default/grub <<'EOF'
 for i in /etc/default/grub.d/*.cfg ; do
 if [ -e "${i}" ]; then
@@ -104,23 +224,19 @@ EOF
 syslinux_append() {
 	new_boot_parameters="$1"
 
-	# Get list of current boot parameters.
-	syslinux_parameters=$(grep -v "Fallback" \
-		/boot/syslinux/syslinux.cfg | grep -C 2 \
-		"MENU LABEL Arch Linux" | grep "APPEND")
-
-	# Add new boot parameters.
-	sed -i "s|${syslinux_parameters}|\
-		${syslinux_parameters} ${new_boot_parameters}|" \
-		/boot/syslinux/syslinux.cfg
+	sed -i '/MENU LABEL Arch Linux/,/^$/ {
+		/APPEND/ s|$| '"${new_boot_parameters}"'|
+	}' /boot/syslinux/syslinux.cfg
 }
 
 # Function to append boot parameters for systemd-boot
 systemd_boot_append() {
 	new_boot_parameters="$1"
 
-	# Append new boot parameters for systemd-boot.
-	bootctl update
+	if ! compgen -G /boot/loader/entries/*.conf >/dev/null; then
+		warn "No systemd-boot entry files found in /boot/loader/entries/"
+		return
+	fi
 	sed -i "s|^options .*|& ${new_boot_parameters}|" \
 		/boot/loader/entries/*.conf
 }
@@ -128,15 +244,9 @@ systemd_boot_append() {
 # Function to perform script checks
 script_checks() {
 	if [ "${disable_checks}" != "1" ]; then
-		# Check for root
-		if [[ "$(id -u)" -ne 0 ]]; then
-			error "This script needs to be run as root."
-			exit 1
-		fi
-
-		# Check if on Arch Linux.
-		if ! grep "Arch Linux" /etc/os-release &>/dev/null; then
-			error "This script can only be used on Arch Linux."
+		# Check if on Arch Linux or Artix.
+		if ! grep -qE '^(ID=arch|ID=artix)' /etc/os-release 2>/dev/null; then
+			error "This script can only be used on Arch Linux or Artix."
 			exit 1
 		fi
 
@@ -163,10 +273,11 @@ script_checks() {
 			exit 1
 		fi
 
-		# Check if using systemd.
-		if ! systemctl >/dev/null 2>&1; then
-			error "This script can only be used with systemd."
-			exit 1
+		# systemd-boot only works with systemd.
+		if [ "$init_system" != "$INIT_SYSTEMD" ] \
+			&& [ "${use_systemd_boot}" = "y" ]; then
+			warn "systemd-boot requires systemd." \
+				"Bootloader features limited."
 		fi
 	fi
 }
@@ -286,9 +397,8 @@ EOF
 			syslinux_append "${kernel_params}"
 		# Systemd-boot configuration.
 		elif [ "${use_systemd_boot}" = "y" ]; then
+			systemd_boot_append "${kernel_params}"
 			bootctl update
-			sed -i "s|^options .*|& ${kernel_params}|" \
-				/boot/loader/entries/*.conf
 		fi
 	fi
 }
@@ -358,8 +468,7 @@ apparmor() {
 			pacman -S --noconfirm -q apparmor
 		fi
 
-		# Enable AppArmor systemd service.
-		systemctl enable apparmor.service
+		svc_enable apparmor.service
 
 		# Enable AppArmor with a boot parameter.
 		if [ "${use_grub}" = "y" ]; then
@@ -392,9 +501,11 @@ add_chaotic_aur() {
 		pacman -U --noconfirm \
 			'https://cdn-mirror.chaotic.cx/chaotic-aur/' \
 			'chaotic-mirrorlist.pkg.tar.zst'
-		printf '\n%s\n%s\n' '[chaotic-aur]' \
-			'Include = /etc/pacman.d/chaotic-mirrorlist' |
-			tee -a /etc/pacman.conf
+		if ! grep -qF '[chaotic-aur]' /etc/pacman.conf; then
+			printf '\n%s\n%s\n' '[chaotic-aur]' \
+				'Include = /etc/pacman.d/chaotic-mirrorlist' |
+				tee -a /etc/pacman.conf
+		fi
 		pacman -Syu --noconfirm
 	fi
 }
@@ -450,7 +561,9 @@ get_hardened_malloc() {
 		if [ "${get_hardened_malloc}" = "y" ]; then
 			pacman -S --noconfirm -q hardened_malloc
 
-			# Set SUID permissions on hardened_malloc
+			# Set SUID permissions on hardened_malloc.
+			# Note: modern Linux kernels ignore SUID on shared libraries.
+			# This is included for compatibility with older setups.
 			chmod u+s /usr/lib/libhardened_malloc.so
 
 			# Add hardened_malloc to /etc/ld.so.preload
@@ -490,8 +603,8 @@ restrict_root() {
 		passwd -l root
 	fi
 
-	# Checks if SSH is installed before asking.
-	if [ -x "$(command -v ssh)" ]; then
+	# Checks if SSH server is installed before asking.
+	if [ -x "$(command -v sshd)" ] || [ -f /etc/ssh/sshd_config ]; then
 		# Deny root login via SSH.
 		read -r -p "Deny root login via SSH? (y/n) " deny_root_ssh
 		if [ "${deny_root_ssh}" = "y" ]; then
@@ -500,22 +613,41 @@ restrict_root() {
 	fi
 }
 
-# Function to install and configure UFW
+# Function to install and configure nftables firewall
 firewall() {
 	## Firewall
-	read -r -p "Install and configure UFW? (y/n) " install_ufw
-	if [ "${install_ufw}" = "y" ]; then
-		# Installs ufw if it isn't already.
-		if ! pacman -Qq ufw &>/dev/null; then
-			pacman -S --noconfirm -q ufw
+	read -r -p "Install and configure nftables firewall? (y/n) " install_nftables
+	if [ "${install_nftables}" = "y" ]; then
+		# Installs nftables if it isn't already.
+		if ! pacman -Qq nftables &>/dev/null; then
+			pacman -S --noconfirm -q nftables
 		fi
 
-		# Enable UFW.
-		ufw enable
-		systemctl enable --now ufw.service
+		# Write a basic inbound-deny nftables ruleset.
+		cat <<'NFTEOF' >/etc/nftables.conf
+#!/usr/bin/nft -f
+flush ruleset
 
-		# Deny all incoming traffic.
-		ufw default deny incoming # Also disables ICMP timestamps
+table inet filter {
+	chain input {
+		type filter hook input priority 0; policy drop;
+		ct state established,related accept
+		ct state invalid drop
+		iif lo accept
+		ip protocol icmp accept
+		ip6 nexthdr ipv6-icmp accept
+	}
+	chain forward {
+		type filter hook forward priority 0; policy drop;
+	}
+	chain output {
+		type filter hook output priority 0; policy accept;
+	}
+}
+NFTEOF
+
+		# Enable and start nftables.
+		svc_enable_now nftables.service
 	fi
 }
 
@@ -533,9 +665,11 @@ setup_tor() {
 		read -r -p "Force pacman through Tor? (y/n) " pacman_tor
 		if [ "${pacman_tor}" = "y" ]; then
 			# Configure a SocksPort for Pacman.
+		if ! grep -qF 'SocksPort 9062' /etc/tor/torrc 2>/dev/null; then
 			echo '''
 # Pacman SocksPort
 SocksPort 9062''' >>/etc/tor/torrc
+		fi
 			sed -i 's/#XferCommand = \/usr\/bin\/curl ' \
 				'-L -C - -f -o %o %u/' \
 				'XferCommand = \/usr\/bin\/curl ' \
@@ -547,17 +681,17 @@ SocksPort 9062''' >>/etc/tor/torrc
 			sed -i 's/Server = http:/#Server = http:/' /etc/pacman.d/mirrorlist
 		fi
 
-		# Enables tor systemd service.
-		systemctl enable --now tor.service
+		# Enable tor service.
+		svc_enable_now tor.service
 	fi
 }
 
 # Function to change hostname
 configure_hostname() {
 	## Change hostname to a generic one.
-	read -r -p "Change hostname to 'host'? (y/n) " hostname
-	if [ "${hostname}" = "y" ]; then
-		hostnamectl set-hostname host
+	read -r -p "Change hostname to 'host'? (y/n) " hostname_prompt
+	if [ "${hostname_prompt}" = "y" ]; then
+		set_hostname_cmd host
 	fi
 }
 
@@ -609,8 +743,9 @@ mac_address_spoofing() {
 			chown root:root /usr/lib/arch-hardening-script/spoof-mac-addresses
 			chmod 755 /usr/lib/arch-hardening-script/spoof-mac-addresses
 
-			# Creates systemd service for MAC spoofing.
-			cat <<EOF >/etc/systemd/system/macspoof.service
+			# Creates systemd service for MAC spoofing if using systemd.
+			if [ "$init_system" = "$INIT_SYSTEMD" ]; then
+				cat <<EOF >/etc/systemd/system/macspoof.service
 [Unit]
 Description=Spoofs MAC addresses
 Wants=network-pre.target
@@ -636,9 +771,53 @@ RestrictNamespaces=true
 [Install]
 WantedBy=multi-user.target
 EOF
-
-			# Enables systemd service.
-			systemctl enable macspoof.service
+				svc_enable macspoof.service
+			else
+				# Non-systemd: create an init-specific service.
+				if [ "$init_system" = "$INIT_OPENRC" ]; then
+					cat <<'EOF' >/etc/init.d/macspoof
+#!/sbin/openrc-run
+description="Spoof MAC addresses at boot"
+depend() { need net; before net; }
+start() {
+	/usr/lib/arch-hardening-script/spoof-mac-addresses
+}
+EOF
+					chmod 755 /etc/init.d/macspoof
+					svc_enable macspoof
+				elif [ "$init_system" = "$INIT_RUNIT" ]; then
+					mkdir -p /etc/runit/sv/macspoof
+					cat <<'EOF' >/etc/runit/sv/macspoof/run
+#!/bin/bash
+set -e
+/usr/lib/arch-hardening-script/spoof-mac-addresses
+exec sleep infinity
+EOF
+					chmod 755 /etc/runit/sv/macspoof/run
+					svc_enable macspoof
+				elif [ "$init_system" = "$INIT_S6" ]; then
+					mkdir -p /etc/s6/sv/macspoof
+					cat <<'EOF' >/etc/s6/sv/macspoof/run
+#!/usr/bin/execlineb -P
+/usr/lib/arch-hardening-script/spoof-mac-addresses
+EOF
+					chmod 755 /etc/s6/sv/macspoof/run
+					echo oneshot >/etc/s6/sv/macspoof/type
+					svc_enable macspoof
+				elif [ "$init_system" = "$INIT_DINIT" ]; then
+					cat <<'EOF' >/etc/dinit.d/macspoof
+type = scripted
+command = /usr/lib/arch-hardening-script/spoof-mac-addresses
+depends-on = network.target
+before = network.target
+EOF
+					svc_enable macspoof
+				else
+					warn "MAC spoofing service not supported" \
+						"on $init_system. Run the script" \
+						"manually at boot."
+				fi
+			fi
 		elif [ "${which_mac_spoofer}" = "NetworkManager" ]; then
 			# Installs networkmanager if it isn't already installed.
 			if ! pacman -Qq networkmanager &>/dev/null; then
@@ -679,8 +858,8 @@ install_usbguard() {
 			pacman -S --noconfirm -q usbguard
 		fi
 
-		# Enable and start the USBGuard systemd service.
-		systemctl enable --now usbguard.service
+		# Enable and start USBGuard service.
+		svc_enable_now usbguard.service
 	fi
 }
 
@@ -704,14 +883,14 @@ disable_coredumps() {
 		echo "kernel.core_pattern=|/bin/false" \
 			>/etc/sysctl.d/disable_coredumps.conf
 
-		# Make coredump drop-in directory if it doesn't already exist.
-		if ! [ -d /etc/systemd/coredump.conf.d ]; then
-			mkdir /etc/systemd/coredump.conf.d
-		fi
-
-		# Disables coredumps via systemd.
-		echo "[Coredump]
+		# Disable coredumps via systemd (systemd only).
+		if [ "$init_system" = "$INIT_SYSTEMD" ]; then
+			if ! [ -d /etc/systemd/coredump.conf.d ]; then
+				mkdir /etc/systemd/coredump.conf.d
+			fi
+			echo "[Coredump]
 Storage=none" >/etc/systemd/coredump.conf.d/disable_coredumps.conf
+		fi
 
 		# Disables coredumps via limits.
 		echo "* hard core 0" >>/etc/security/limits.conf
@@ -743,21 +922,20 @@ microcode_updates() {
 			fi
 
 			cpu_manufacturer="intel"
+		else
+			warn "Could not detect CPU manufacturer." \
+				"Skipping microcode installation."
+			return
 		fi
 
 		if [ "${use_grub}" = "y" ]; then
 			# Update GRUB configuration.
 			grub-mkconfig -o /boot/grub/grub.cfg
 		elif [ "${use_syslinux}" = "y" ]; then
-			# Get current initrd configuration.
-			current_initrd=$(grep -v "Fallback" \
-				/boot/syslinux/syslinux.cfg | grep -C 3 \
-				"MENU LABEL Arch Linux" | grep "INITRD")
-
-			# Update syslinux configuration.
-			sed -i "s|${current_initrd}|\
-				${current_initrd},../${cpu_manufacturer}-ucode.img|" \
-				/boot/syslinux/syslinux.cfg
+			# Append microcode to INITRD line after "MENU LABEL Arch Linux".
+			sed -i '/MENU LABEL Arch Linux/,/^$/ {
+				/INITRD/ s|$|,../'"${cpu_manufacturer}"'-ucode.img|
+			}' /boot/syslinux/syslinux.cfg
 		fi
 	fi
 }
@@ -775,8 +953,12 @@ disable_ntp() {
 		done
 
 		# Disables NTP
-		timedatectl set-ntp 0
-		systemctl mask systemd-timesyncd.service
+		disable_ntp_system
+		if [ "$init_system" = "$INIT_SYSTEMD" ]; then
+			svc_mask systemd-timesyncd.service
+		else
+			svc_mask ntpd 2>/dev/null || true
+		fi
 	fi
 }
 
@@ -822,12 +1004,13 @@ ipv6.ip6-privacy=2" >>/etc/NetworkManager/NetworkManager.conf
 				fi
 			fi
 
-			## Check for systemd-networkd.
-			if systemctl is-active systemd-networkd.service >/dev/null 2>&1; then
+			## Check for systemd-networkd (systemd only).
+			if [ "$init_system" = "$INIT_SYSTEMD" ] \
+				&& svc_is_active systemd-networkd.service; then
 				# Enable IPv6 privacy extensions for systemd-networkd.
 				read -r -p "Enable IPv6 privacy extensions " \
-					"for systemd-networkd? (y/n) " systemd-networkd
-				if [ "${systemd-networkd}" = "y" ]; then
+					"for systemd-networkd? (y/n) " systemd_networkd
+				if [ "${systemd_networkd}" = "y" ]; then
 					echo "[Network]
 IPv6PrivacyExtensions=kernel" >/etc/systemd/network/ipv6_privacy.conf
 				fi
@@ -904,7 +1087,7 @@ more_entropy() {
 				"enable haveged? (y/n) " enable_haveged
 			if [ "${enable_haveged}" = "y" ]; then
 				pacman -S --noconfirm -q haveged
-				systemctl enable haveged.service
+				svc_enable haveged.service
 			fi
 		fi
 
@@ -954,8 +1137,17 @@ ending() {
 
 # Main script execution
 main() {
-	parse_arguments "$@"
 	set_script_options
+	parse_arguments "$@"
+	check_root
+	detect_init_system
+	if [ "$init_system" = "unknown" ]; then
+		error "Could not detect init system." \
+			"This script supports systemd," \
+			"OpenRC, runit, s6, and dinit."
+		exit 1
+	fi
+	log "Detected init system: $init_system"
 	update_system
 	script_checks
 	sysctl_hardening
