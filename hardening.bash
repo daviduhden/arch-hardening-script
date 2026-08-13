@@ -19,28 +19,15 @@ set -euo pipefail
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-# Simple colored logging
-if [[ -t 1 && ${NO_COLOR:-} != "1" ]]; then
-	GREEN="\033[32m"
-	YELLOW="\033[33m"
-	RED="\033[31m"
-	RESET="\033[0m"
-else
-	GREEN=""
-	YELLOW=""
-	RED=""
-	RESET=""
-fi
-
 log() { printf \
-	'%s %b[INFO]%b [OK] %s\n' \
-	"$(date '+%Y-%m-%d %H:%M:%S')" "$GREEN" "$RESET" "$*"; }
+	'%s [INFO] [OK] %s\n' \
+	"$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 warn() { printf \
-	'%s %b[WARN]%b [WARN] %s\n' \
-	"$(date '+%Y-%m-%d %H:%M:%S')" "$YELLOW" "$RESET" "$*" >&2; }
+	'%s [WARN] [WARN] %s\n' \
+	"$(date '+%Y-%m-%d %H:%M:%S')" "$*" >&2; }
 error() { printf \
-	'%s %b[ERROR]%b [ERROR] %s\n' \
-	"$(date '+%Y-%m-%d %H:%M:%S')" "$RED" "$RESET" "$*" >&2; }
+	'%s [ERROR] [ERROR] %s\n' \
+	"$(date '+%Y-%m-%d %H:%M:%S')" "$*" >&2; }
 
 # ---- Init system detection and service management ----
 
