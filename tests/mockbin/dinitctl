@@ -1,0 +1,14 @@
+#!/bin/bash
+echo "dinitctl $*" >> "${MOCK_LOG:?}"
+case "$1" in
+enable) echo "$2" >>"$FAKE_ENABLED"; exit 0 ;;
+start) echo "$2" >>"$FAKE_ACTIVE"; exit 0 ;;
+disable) sed -i "\|^${2}\$|d" "$FAKE_ENABLED" 2>/dev/null; exit 0 ;;
+status)
+	if grep -qxF -- "$2" "$FAKE_ACTIVE" 2>/dev/null; then
+		exit 0
+	fi
+	exit 1
+	;;
+esac
+exit 0

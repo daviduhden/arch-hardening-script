@@ -1,0 +1,3 @@
+#!/bin/bash
+echo "timedatectl $*" >> "${MOCK_LOG:?}"
+exit 0

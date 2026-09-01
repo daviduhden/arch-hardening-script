@@ -1,0 +1,8 @@
+#!/bin/bash
+echo "rc-update $*" >> "${MOCK_LOG:?}"
+case "$1" in
+add) echo "$2" >>"$FAKE_ENABLED"; exit 0 ;;
+del) sed -i "\|^${2}\$|d" "$FAKE_ENABLED" 2>/dev/null; exit 0 ;;
+show) cat "$FAKE_ENABLED" 2>/dev/null; exit 0 ;;
+esac
+exit 0

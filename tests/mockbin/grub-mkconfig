@@ -1,0 +1,5 @@
+#!/bin/bash
+echo "grub-mkconfig $*" >> "${MOCK_LOG:?}"
+mkdir -p "${TEST_ROOT:?}/boot/grub"
+touch "${TEST_ROOT:?}/boot/grub/grub.cfg"
+exit 0

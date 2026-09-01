@@ -1,0 +1,9 @@
+#!/bin/bash
+echo "usbguard $*" >> "${MOCK_LOG:?}"
+case "$1" in
+generate-policy)
+	printf 'allow id 1d6b:0002 serial "" name "" hash "abc123"\n'
+	exit 0
+	;;
+esac
+exit 0

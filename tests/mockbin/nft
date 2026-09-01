@@ -1,0 +1,3 @@
+#!/bin/bash
+echo "nft $*" >> "${MOCK_LOG:?}"
+exit 0

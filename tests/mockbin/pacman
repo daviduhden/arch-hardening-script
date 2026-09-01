@@ -1,0 +1,23 @@
+#!/bin/bash
+echo "pacman $*" >> "${MOCK_LOG:?}"
+if [ "$1" = "-Qq" ]; then
+	if grep -qxF -- "${!#}" "$FAKE_INSTALLED" 2>/dev/null; then
+		exit 0
+	fi
+	exit 1
+fi
+if [ "$1" = "-S" ]; then
+	shift
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--needed | --noconfirm | --asdeps) shift ;;
+		*)
+			grep -qxF -- "$1" "$FAKE_INSTALLED" 2>/dev/null ||
+				echo "$1" >>"$FAKE_INSTALLED"
+			shift
+			;;
+		esac
+	done
+	exit 0
+fi
+exit 0

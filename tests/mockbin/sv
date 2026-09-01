@@ -1,0 +1,11 @@
+#!/bin/bash
+echo "sv $*" >> "${MOCK_LOG:?}"
+case "$1" in
+status)
+	if grep -qxF -- "$2" "$FAKE_ACTIVE" 2>/dev/null; then
+		exit 0
+	fi
+	exit 1
+	;;
+esac
+exit 0

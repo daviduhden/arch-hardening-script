@@ -1,0 +1,8 @@
+#!/bin/bash
+echo "modinfo $*" >> "${MOCK_LOG:?}"
+for m in ${MISSING_MODULES:-}; do
+	if [ "$m" = "${!#}" ]; then
+		exit 1
+	fi
+done
+exit 0

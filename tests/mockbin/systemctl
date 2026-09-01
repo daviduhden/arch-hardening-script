@@ -1,0 +1,20 @@
+#!/bin/bash
+echo "systemctl $*" >> "${MOCK_LOG:?}"
+svc=""
+for a in "$@"; do svc="$a"; done
+case "$1" in
+is-enabled | is-active)
+	if grep -qxF -- "$svc" "$FAKE_ENABLED" 2>/dev/null; then
+		exit 0
+	fi
+	if [ "$1" = "is-active" ] &&
+		grep -qxF -- "$svc" "$FAKE_ACTIVE" 2>/dev/null; then
+		exit 0
+	fi
+	exit 1
+	;;
+enable | start) echo "$svc" >>"$FAKE_ENABLED"; exit 0 ;;
+disable | mask) sed -i "\|^${svc}\$|d" "$FAKE_ENABLED" 2>/dev/null
+	exit 0 ;;
+esac
+exit 0

@@ -1,0 +1,11 @@
+#!/bin/bash
+echo "s6-rc $*" >> "${MOCK_LOG:?}"
+case "$2" in
+status)
+	if grep -qxF -- "$3" "$FAKE_ACTIVE" 2>/dev/null; then
+		exit 0
+	fi
+	exit 1
+	;;
+esac
+exit 0

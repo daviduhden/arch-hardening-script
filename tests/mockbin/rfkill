@@ -1,0 +1,3 @@
+#!/bin/bash
+echo "rfkill $*" >> "${MOCK_LOG:?}"
+exit 0

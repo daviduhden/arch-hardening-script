@@ -1,0 +1,11 @@
+#!/bin/bash
+echo "bootctl $*" >> "${MOCK_LOG:?}"
+case "$1" in
+is-installed)
+	if [ -d "${TEST_ROOT:?}/boot/loader" ]; then
+		exit 0
+	fi
+	exit 1
+	;;
+esac
+exit 0

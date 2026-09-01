@@ -1,0 +1,12 @@
+#!/bin/bash
+echo "rc-service $*" >> "${MOCK_LOG:?}"
+case "$1" in
+status)
+	if grep -qxF -- "$2" "$FAKE_ACTIVE" 2>/dev/null; then
+		exit 0
+	fi
+	exit 1
+	;;
+start) echo "$2" >>"$FAKE_ACTIVE"; exit 0 ;;
+esac
+exit 0

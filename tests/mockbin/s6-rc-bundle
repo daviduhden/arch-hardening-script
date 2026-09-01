@@ -1,0 +1,8 @@
+#!/bin/bash
+echo "s6-rc-bundle $*" >> "${MOCK_LOG:?}"
+case "$1" in
+contents) cat "$FAKE_ENABLED" 2>/dev/null; exit 0 ;;
+add) echo "$3" >>"$FAKE_ENABLED"; exit 0 ;;
+delete) sed -i "\|^${3}\$|d" "$FAKE_ENABLED" 2>/dev/null; exit 0 ;;
+esac
+exit 0
