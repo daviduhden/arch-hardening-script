@@ -21,7 +21,7 @@ set -euo pipefail
 
 VERSION="2.0.0"
 PROJECT_NAME="arch-hardening-script"
-ROOT="${ARCH_HARDENING_TEST_ROOT:-}"   # test-only prefix (see tests/)
+ROOT="${ARCH_HARDENING_TEST_ROOT:-}" # test-only prefix (see tests/)
 STATE_DIR="${ROOT%/}/var/lib/arch-hardening-script"
 JOURNAL="$STATE_DIR/journal"
 BACKUP_SUFFIX=".arch-hardening.bak"
@@ -36,7 +36,7 @@ DRY_RUN=0
 DISABLE_CHECKS=0
 CONFIG_FILE=""
 DO_UNDO=0
-ANSWER=""               # result of the last ask() call
+ANSWER="" # result of the last ask() call
 
 declare -A CONFIG_ANSWERS
 
@@ -45,8 +45,8 @@ bootloader=""
 distro_id=""
 network_manager=""
 cpu_vendor=""
-kernel_params=""        # accumulated kernel command-line additions
-SYSCTL_LINES=""         # accumulated sysctl lines
+kernel_params="" # accumulated kernel command-line additions
+SYSCTL_LINES=""  # accumulated sysctl lines
 nft_allow_ssh=""
 CHANGES=0
 
@@ -799,8 +799,7 @@ apply_systemd_boot_params() {
 	local entry found=""
 	for entry in "${ROOT%/}"/boot/loader/entries/*.conf; do
 		[ -e "$entry" ] || continue
-		if ! grep -q '^linux[[:space:]]' "$entry" 2>/dev/null;
-		then
+		if ! grep -q '^linux[[:space:]]' "$entry" 2>/dev/null; then
 			continue
 		fi
 		if ! grep -q 'vmlinuz' "$entry" 2>/dev/null; then
@@ -1295,9 +1294,9 @@ feature_chaotic_aur() {
 	fi
 	pacman-key --lsign-key 3056513887B78AEB
 	if ! pacman -U --noconfirm \
-		'https://cdn-mirror.chaotic.cx/chaotic-aur/'\
+		'https://cdn-mirror.chaotic.cx/chaotic-aur/' \
 		'chaotic-keyring.pkg.tar.zst' \
-		'https://cdn-mirror.chaotic.cx/chaotic-aur/'\
+		'https://cdn-mirror.chaotic.cx/chaotic-aur/' \
 		'chaotic-mirrorlist.pkg.tar.zst'; then
 		error "Failed to install the Chaotic-AUR keyring and" \
 			"mirrorlist."
@@ -1483,7 +1482,7 @@ feature_coredumps() {
 		# Keep systemd-coredump as the handler so crashes
 		# are still journaled, but store no core files.
 		write_file \
-		"/etc/systemd/coredump.conf.d/99-arch-hardening.conf" \
+			"/etc/systemd/coredump.conf.d/99-arch-hardening.conf" \
 			"# Managed by $PROJECT_NAME. See README.md.
 [Coredump]
 Storage=none"
