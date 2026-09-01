@@ -630,7 +630,7 @@ Known breakage when the corresponding option is enabled:
 * Bluetooth blacklist: Bluetooth is unavailable until unblocked.
 * hardened_malloc global preload: Electron-based apps and various
   games may crash; per-application use avoids this.
-* linux-hardened: no unprivileged user namespaces (Flatpak/
+* linux-hardened: no unprivileged user namespaces (Flatpak and
   bubblewrap need the setuid fallback), kexec unavailable.
 
 ## Security Limitations
