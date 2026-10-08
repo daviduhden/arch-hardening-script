@@ -1,3 +1,0 @@
-#!/bin/bash
-echo "chmod $*" >> "${MOCK_LOG:?}"
-exec /usr/bin/chmod "$@"

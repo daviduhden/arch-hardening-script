@@ -21,7 +21,7 @@ set -euo pipefail
 
 VERSION="2.0.0"
 PROJECT_NAME="arch-hardening-script"
-ROOT="${ARCH_HARDENING_TEST_ROOT:-}" # test-only prefix (see tests/)
+ROOT="${ARCH_HARDENING_TEST_ROOT:-}" # optional alternate root prefix
 STATE_DIR="${ROOT%/}/var/lib/arch-hardening-script"
 JOURNAL="$STATE_DIR/journal"
 BACKUP_SUFFIX=".arch-hardening.bak"

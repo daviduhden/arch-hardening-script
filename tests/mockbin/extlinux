@@ -1,3 +1,0 @@
-#!/bin/bash
-echo "extlinux $*" >> "${MOCK_LOG:?}"
-exit 0

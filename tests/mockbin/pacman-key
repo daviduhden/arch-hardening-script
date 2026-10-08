@@ -1,3 +1,0 @@
-#!/bin/bash
-echo "pacman-key $*" >> "${MOCK_LOG:?}"
-exit 0

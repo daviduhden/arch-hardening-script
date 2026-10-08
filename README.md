@@ -670,16 +670,9 @@ This script cannot protect against:
 
 ## Development
 
-Static testing is available and run in CI-free fashion:
+Static checks (no automated test suite ships with this project):
 
 ```sh
 bash -n hardening.bash
 shellcheck hardening.bash
-bash tests/run-tests.bash
 ```
-
-The test suite runs the script against a synthetic filesystem
-(no root required) with mocked pacman/systemctl/rc-service/sv/
-s6-rc/dinitctl/grub-mkconfig/bootctl/nft/sysctl/modprobe and
-covers the supported init systems, bootloaders, idempotence,
-`--undo` and `--dry-run`.
