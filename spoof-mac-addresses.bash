@@ -3,13 +3,13 @@
 set -euo pipefail
 
 log() { printf \
-	'%s [INFO] [OK] %s\n' \
+	'%s [INFO] %s\n' \
 	"$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 warn() { printf \
-	'%s [WARN] [WARN] %s\n' \
+	'%s [WARN] %s\n' \
 	"$(date '+%Y-%m-%d %H:%M:%S')" "$*" >&2; }
 error() { printf \
-	'%s [ERROR] [ERROR] %s\n' \
+	'%s [ERROR] %s\n' \
 	"$(date '+%Y-%m-%d %H:%M:%S')" "$*" >&2; }
 
 # MAC addresses spoofing script for Linux
@@ -38,17 +38,25 @@ spoof_mac_addresses() {
 	for p in /sys/class/net/*; do
 		[ -e "$p" ] || continue
 		iface=${p##*/}
+		# Skip loopback, tunnels and virtual/bridge
+		# interfaces that have no (or a shared) hardware
+		# address to randomize.
 		case "$iface" in
-		lo | tun0 | virbr* | docker* | veth*)
+		lo | tun* | tap* | virbr* | docker* | veth* | \
+			br-* | bond* | dummy* | wg* | vmnet*)
 			continue
 			;;
 		esac
 
-		# Spoof the MAC address of the interface.
-		ip link set dev "$iface" down
+		# A device must be down while its address is changed.
+		if ! ip link set dev "$iface" down; then
+			warn "could not bring $iface down; skipping"
+			continue
+		fi
 		macchanger -e "$iface" >/dev/null ||
 			warn "macchanger failed on $iface"
-		ip link set dev "$iface" up
+		ip link set dev "$iface" up ||
+			warn "could not bring $iface up"
 	done
 }
 

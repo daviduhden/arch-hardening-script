@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-VERSION="2.0.0"
+VERSION="2.0.1"
 PROJECT_NAME="arch-hardening-script"
 ROOT="${ARCH_HARDENING_TEST_ROOT:-}" # optional alternate root prefix
 STATE_DIR="${ROOT%/}/var/lib/arch-hardening-script"
@@ -151,9 +151,16 @@ ask_choice() {
 	shift
 	local configured="${CONFIG_ANSWERS[$key]:-}"
 	if [ -n "$configured" ]; then
-		ANSWER="$configured"
-		log "Config $key=$configured"
-		return 0
+		local c
+		for c in "$@"; do
+			if [ "$configured" = "$c" ]; then
+				ANSWER="$configured"
+				log "Config $key=$configured"
+				return 0
+			fi
+		done
+		warn "Invalid value for $key: '$configured' (expected:" \
+			"$*); prompting instead."
 	fi
 	if [ "$DRY_RUN" = "1" ]; then
 		ANSWER="$1"
@@ -194,6 +201,21 @@ load_config_file() {
 		key="${line%%=*}"
 		value="${line#*=}"
 		key="$(printf '%s' "$key" | tr -d '[:space:]')"
+		# Tolerate CRLF endings, surrounding whitespace and
+		# optional quotes around the value.
+		value="${value%$'\r'}"
+		value="${value#"${value%%[![:space:]]*}"}"
+		value="${value%"${value##*[![:space:]]}"}"
+		case "$value" in
+		\"*\")
+			value="${value#\"}"
+			value="${value%\"}"
+			;;
+		\'*\')
+			value="${value#\'}"
+			value="${value%\'}"
+			;;
+		esac
 		if [ -z "$key" ]; then
 			warn "Ignoring malformed config line: $line"
 			continue
@@ -301,9 +323,8 @@ remove_file() {
 	CHANGES=$((CHANGES + 1))
 }
 
-# backup_and_edit <path> <edit-function...>
-# Backs up an administrator-owned file once, then applies the
-# given command(s). Only for small, targeted edits (PAM, limits).
+# backup_existing <path>
+# Backs up an administrator-owned file once, before a targeted edit.
 backup_existing() {
 	local path="$1"
 	path="${ROOT%/}${path}"
@@ -343,7 +364,12 @@ append_line_if_missing() {
 		CHANGES=$((CHANGES + 1))
 		return 0
 	fi
-	backup_existing "$path"
+	# A file this script created is removed by --undo, so no backup
+	# is needed (and restoring a partial backup after removal would
+	# leave the file behind).
+	if ! journal_has "C	$full"; then
+		backup_existing "$path"
+	fi
 	printf '%s\n' "$line" >>"$full"
 	log "Appended to $full: $line"
 	CHANGES=$((CHANGES + 1))
@@ -701,6 +727,22 @@ svc_mask() {
 	CHANGES=$((CHANGES + 1))
 }
 
+# svc_unmask <svc>
+# Reverses a systemd mask recorded by svc_mask. Other init systems
+# have no mask concept, so this is a no-op there.
+svc_unmask() {
+	local svc="$1"
+	case "$init_system" in
+	systemd)
+		if [ "$DRY_RUN" = "1" ]; then
+			log "Dry-run: would unmask $svc"
+			return 0
+		fi
+		systemctl unmask "$svc" 2>/dev/null || true
+		;;
+	esac
+}
+
 # The package that provides the init-specific service definition
 # on Artix, e.g. "nftables-openrc".
 init_service_pkg() {
@@ -871,12 +913,24 @@ apply_syslinux_params() {
 		return 0
 	fi
 	backup_existing "/boot/syslinux/syslinux.cfg"
+	local missing_esc
 	missing_esc="$(printf '%s' "$missing" |
 		sed 's|[&\\|]|\\&|g')"
 	sed -i -E \
 		'/MENU LABEL Arch Linux/,/^[[:space:]]*$/ { /^[[:space:]]*APPEND[[:space:]]/ s|$|'"$missing_esc"'| }' \
 		"$cfg"
-	log "Updated Syslinux configuration."
+	# The sed range only matches the "Arch Linux" label; verify the
+	# parameters actually landed instead of reporting a silent no-op.
+	local still="" p
+	for p in $missing; do
+		line_has_param "$(cat "$cfg")" "$p" || still="$still $p"
+	done
+	if [ -n "${still## }" ]; then
+		warn "Syslinux 'Arch Linux' entry not found (or it" \
+			"has no APPEND line); add manually:$still"
+	else
+		log "Updated Syslinux configuration."
+	fi
 	CHANGES=$((CHANGES + 1))
 }
 
@@ -1627,8 +1681,6 @@ feature_mac_randomization() {
 			"# Managed by $PROJECT_NAME. See README.md.
 [device]
 wifi.scan-rand-mac-address=yes
-wifi.cloned-mac-address=${mode}
-ethernet.cloned-mac-address=${mode}
 [connection]
 wifi.cloned-mac-address=${mode}
 ethernet.cloned-mac-address=${mode}"
@@ -1637,6 +1689,7 @@ ethernet.cloned-mac-address=${mode}"
 		ask_choice mac-mode \
 			"MAC mode (random or persistent)" \
 			random persistent
+		local mode="$ANSWER"
 		write_file "/etc/systemd/network/99-arch-hardening-mac.link" \
 			"# Managed by $PROJECT_NAME. See README.md.
 [Link]
@@ -1701,10 +1754,10 @@ install_macchanger_service() {
 		svc_enable macspoof
 		;;
 	s6)
-		write_file "/etc/s6/sv/macspoof/run" \
+		write_file "/etc/s6/sv/macspoof/up" \
 			"$(macspoof_s6_script)"
 		write_file "/etc/s6/sv/macspoof/type" "oneshot"
-		chmod 0755 "${ROOT%/}/etc/s6/sv/macspoof/run"
+		chmod 0755 "${ROOT%/}/etc/s6/sv/macspoof/up"
 		svc_enable macspoof
 		;;
 	dinit)
@@ -1736,7 +1789,7 @@ PrivateTmp=true
 MemoryDenyWriteExecute=true
 NoNewPrivileges=true
 RestrictRealtime=true
-RestrictAddressFamilies=AF_INET
+RestrictAddressFamilies=AF_INET AF_NETLINK
 SystemCallArchitectures=native
 RestrictNamespaces=true
 
@@ -1749,7 +1802,7 @@ macspoof_openrc_script() {
 	cat <<'EOF'
 #!/sbin/openrc-run
 description="Spoof MAC addresses at boot"
-depend() { need net; before net; }
+depend() { before net; }
 start() {
 	/usr/lib/arch-hardening-script/spoof-mac-addresses
 }
@@ -1776,7 +1829,6 @@ macspoof_dinit_script() {
 	cat <<'EOF'
 type = scripted
 command = /usr/lib/arch-hardening-script/spoof-mac-addresses
-depends-on = network.target
 before = network.target
 EOF
 }
@@ -1851,7 +1903,7 @@ configure_pacman_tor() {
 	fi
 	local line
 	line="XferCommand = /usr/bin/curl --socks5-hostname \
-localhost:9062 --continue-at - --fail --output %o %u"
+localhost:9050 --continue-at - --fail --output %o %u"
 	if [ "$DRY_RUN" = "1" ]; then
 		log "Dry-run: would set pacman XferCommand."
 		CHANGES=$((CHANGES + 1))
@@ -1867,7 +1919,7 @@ localhost:9062 --continue-at - --fail --output %o %u"
 		printf '%s\n' "$line" >>"$pacman_conf"
 	fi
 	log "Configured pacman to download via Tor (SOCKS" \
-		"port 9062). Ensure Tor is running."
+		"port 9050). Ensure Tor is running."
 	CHANGES=$((CHANGES + 1))
 }
 
@@ -1932,8 +1984,12 @@ do_undo() {
 		C?*)
 			local created="${line#C	}"
 			if [ -e "$created" ]; then
-				rm -f "$created"
-				log "Removed: $created"
+				if [ "$DRY_RUN" = "1" ]; then
+					log "Dry-run: would remove $created"
+				else
+					rm -f "$created"
+					log "Removed: $created"
+				fi
 			fi
 			;;
 		M?*)
@@ -1941,8 +1997,12 @@ do_undo() {
 			local backup="${target#*	}"
 			target="${target%%	*}"
 			if [ -e "$backup" ]; then
-				cp -a "$backup" "$target"
-				log "Restored: $target"
+				if [ "$DRY_RUN" = "1" ]; then
+					log "Dry-run: would restore $target"
+				else
+					cp -a "$backup" "$target"
+					log "Restored: $target"
+				fi
 			fi
 			;;
 		S+?*)
@@ -1953,6 +2013,7 @@ do_undo() {
 			local masked="${line#S-	}"
 			local prev="${masked#*	}"
 			masked="${masked%%	*}"
+			svc_unmask "$masked"
 			if [ "$prev" = "1" ]; then
 				svc_enable "$masked"
 			fi
@@ -1963,11 +2024,20 @@ do_undo() {
 	if [ -n "$grub_touched" ] &&
 		command -v grub-mkconfig >/dev/null 2>&1 &&
 		[ -f "${ROOT%/}/boot/grub/grub.cfg" ]; then
-		log "Regenerating GRUB configuration."
-		grub-mkconfig -o "${ROOT%/}/boot/grub/grub.cfg" ||
-			warn "grub-mkconfig failed during undo."
+		if [ "$DRY_RUN" = "1" ]; then
+			log "Dry-run: would regenerate the GRUB" \
+				"configuration."
+		else
+			log "Regenerating GRUB configuration."
+			grub-mkconfig -o "${ROOT%/}/boot/grub/grub.cfg" ||
+				warn "grub-mkconfig failed during undo."
+		fi
 	fi
 
+	if [ "$DRY_RUN" = "1" ]; then
+		log "Dry-run: the journal was left untouched."
+		return 0
+	fi
 	rm -f "$JOURNAL"
 	rmdir "$STATE_DIR" 2>/dev/null || true
 	log "Undo complete. Installed packages were left in" \
@@ -1977,8 +2047,8 @@ do_undo() {
 
 # ---- main ---------------------------------------------------------
 check_root() {
-	# The test root is an internal mechanism exercised only by
-	# the test suite; production runs never set it.
+	# An explicit alternate root (ARCH_HARDENING_TEST_ROOT) is
+	# treated as trusted; a normal run must be root.
 	if [ -n "$ROOT" ] || [ "$DRY_RUN" = "1" ]; then
 		return 0
 	fi
@@ -2031,6 +2101,7 @@ main() {
 
 	if [ "$DO_UNDO" = "1" ]; then
 		check_root
+		detect_init
 		do_undo
 		exit 0
 	fi

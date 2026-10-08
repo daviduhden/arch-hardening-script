@@ -537,7 +537,7 @@ before this project first touched the file.
 
 Every action is recorded in
 `/var/lib/arch-hardening-script/journal`. `--undo` replays that
-journal in reverse:
+journal:
 
 * restores backed-up files,
 * removes files created by the script,
