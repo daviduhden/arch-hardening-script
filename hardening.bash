@@ -21,8 +21,7 @@ set -euo pipefail
 
 VERSION="2.0.1"
 PROJECT_NAME="arch-hardening-script"
-ROOT="${ARCH_HARDENING_TEST_ROOT:-}" # optional alternate root prefix
-STATE_DIR="${ROOT%/}/var/lib/arch-hardening-script"
+STATE_DIR="/var/lib/arch-hardening-script"
 JOURNAL="$STATE_DIR/journal"
 BACKUP_SUFFIX=".arch-hardening.bak"
 
@@ -248,7 +247,6 @@ FILE_CHANGED=0
 write_file() {
 	local path="$1"
 	local content="$2"
-	path="${ROOT%/}${path}"
 	FILE_CHANGED=0
 
 	if [ -f "$path" ] && [ "$(cat "$path")" = "$content" ]; then
@@ -304,7 +302,6 @@ write_file() {
 # nothing for files the script never created.
 remove_file() {
 	local path="$1"
-	path="${ROOT%/}${path}"
 	if [ ! -e "$path" ]; then
 		return 0
 	fi
@@ -327,7 +324,6 @@ remove_file() {
 # Backs up an administrator-owned file once, before a targeted edit.
 backup_existing() {
 	local path="$1"
-	path="${ROOT%/}${path}"
 	[ -f "$path" ] || return 1
 	if [ "$DRY_RUN" = "1" ]; then
 		log "Dry-run: would edit $path"
@@ -350,7 +346,7 @@ backup_existing() {
 append_line_if_missing() {
 	local path="$1"
 	local line="$2"
-	local full="${ROOT%/}${path}"
+	local full="${path}"
 	if [ -f "$full" ]; then
 		if grep -qxF "$line" "$full"; then
 			return 0
@@ -453,11 +449,11 @@ detect_distro() {
 		warn "Compatibility checks disabled."
 		return 0
 	fi
-	if [ ! -r "${ROOT%/}/etc/os-release" ]; then
+	if [ ! -r "/etc/os-release" ]; then
 		fatal "Cannot read /etc/os-release."
 	fi
 	distro_id="$(
-		grep -E '^ID=' "${ROOT%/}/etc/os-release" |
+		grep -E '^ID=' "/etc/os-release" |
 			cut -d= -f2 | tr -d '"'
 	)"
 	case "$distro_id" in
@@ -471,7 +467,7 @@ detect_distro() {
 
 detect_init() {
 	local pid1=""
-	pid1="$(cat "${ROOT%/}/proc/1/comm" 2>/dev/null || true)"
+	pid1="$(cat "/proc/1/comm" 2>/dev/null || true)"
 	case "$pid1" in
 	systemd)
 		init_system="systemd"
@@ -490,16 +486,16 @@ detect_init() {
 		;;
 	*)
 		# Fall back to runtime directories and tools.
-		if [ -d "${ROOT%/}/run/systemd/system" ]; then
+		if [ -d "/run/systemd/system" ]; then
 			init_system="systemd"
-		elif [ -d "${ROOT%/}/run/openrc" ]; then
+		elif [ -d "/run/openrc" ]; then
 			init_system="openrc"
-		elif [ -d "${ROOT%/}/etc/runit/runsvdir" ]; then
+		elif [ -d "/etc/runit/runsvdir" ]; then
 			init_system="runit"
-		elif [ -d "${ROOT%/}/etc/s6/rc" ] ||
+		elif [ -d "/etc/s6/rc" ] ||
 			command -v s6-svscan >/dev/null 2>&1; then
 			init_system="s6"
-		elif [ -d "${ROOT%/}/etc/dinit.d" ]; then
+		elif [ -d "/etc/dinit.d" ]; then
 			init_system="dinit"
 		else
 			init_system="unknown"
@@ -514,13 +510,13 @@ detect_init() {
 }
 
 detect_bootloader() {
-	if [ -d "${ROOT%/}/boot/grub" ] &&
+	if [ -d "/boot/grub" ] &&
 		command -v grub-mkconfig >/dev/null 2>&1; then
 		bootloader="grub"
 	elif command -v bootctl >/dev/null 2>&1 &&
 		bootctl is-installed >/dev/null 2>&1; then
 		bootloader="systemd-boot"
-	elif [ -f "${ROOT%/}/boot/syslinux/syslinux.cfg" ]; then
+	elif [ -f "/boot/syslinux/syslinux.cfg" ]; then
 		bootloader="syslinux"
 	else
 		bootloader="none"
@@ -533,11 +529,11 @@ detect_network_manager() {
 	# command existence, so the choice reflects what actually
 	# manages the interfaces.
 	network_manager="none"
-	if [ -d "${ROOT%/}/etc/NetworkManager" ]; then
+	if [ -d "/etc/NetworkManager" ]; then
 		network_manager="networkmanager"
-	elif [ -d "${ROOT%/}/etc/systemd/network" ]; then
+	elif [ -d "/etc/systemd/network" ]; then
 		network_manager="systemd-networkd"
-	elif [ -d "${ROOT%/}/etc/iwd" ]; then
+	elif [ -d "/etc/iwd" ]; then
 		network_manager="iwd"
 	fi
 	log "Detected network management: $network_manager"
@@ -546,7 +542,7 @@ detect_network_manager() {
 detect_cpu_vendor() {
 	cpu_vendor="$(
 		grep -m1 -oE 'GenuineIntel|AuthenticAMD' \
-			"${ROOT%/}/proc/cpuinfo" 2>/dev/null || true
+			"/proc/cpuinfo" 2>/dev/null || true
 	)"
 	case "$cpu_vendor" in
 	GenuineIntel) cpu_vendor="intel" ;;
@@ -566,15 +562,15 @@ svc_is_enabled() {
 		rc-update show 2>/dev/null | grep -qw "$svc"
 		;;
 	runit)
-		[ -e "${ROOT%/}/etc/runit/runsvdir/default/$svc" ] ||
-			[ -L "${ROOT%/}/etc/runit/runsvdir/default/$svc" ]
+		[ -e "/etc/runit/runsvdir/default/$svc" ] ||
+			[ -L "/etc/runit/runsvdir/default/$svc" ]
 		;;
 	s6)
 		s6-rc-bundle contents default 2>/dev/null |
 			grep -qx "$svc"
 		;;
 	dinit)
-		[ -e "${ROOT%/}/etc/dinit.d/boot.d/$svc" ]
+		[ -e "/etc/dinit.d/boot.d/$svc" ]
 		;;
 	esac
 }
@@ -620,7 +616,7 @@ svc_enable() {
 		;;
 	runit)
 		ln -sfn "/etc/runit/sv/$svc" \
-			"${ROOT%/}/etc/runit/runsvdir/default/$svc"
+			"/etc/runit/runsvdir/default/$svc"
 		;;
 	s6)
 		s6-rc-bundle add default "$svc"
@@ -679,7 +675,7 @@ svc_disable() {
 		rc-update del "$svc" default 2>/dev/null || true
 		;;
 	runit)
-		rm -f "${ROOT%/}/etc/runit/runsvdir/default/$svc"
+		rm -f "/etc/runit/runsvdir/default/$svc"
 		;;
 	s6)
 		s6-rc-bundle delete default "$svc" 2>/dev/null || true
@@ -711,7 +707,7 @@ svc_mask() {
 		;;
 	runit)
 		sv stop "$svc" 2>/dev/null || true
-		rm -f "${ROOT%/}/etc/runit/runsvdir/default/$svc"
+		rm -f "/etc/runit/runsvdir/default/$svc"
 		;;
 	s6)
 		s6-rc -d change "$svc" 2>/dev/null || true
@@ -828,7 +824,7 @@ GRUB_CMDLINE_LINUX=\"\$GRUB_CMDLINE_LINUX$kernel_params\""
 		return 0
 	fi
 	if ! exec_ok grub-mkconfig -o \
-		"${ROOT%/}/boot/grub/grub.cfg"; then
+		"/boot/grub/grub.cfg"; then
 		fatal "grub-mkconfig failed. The generated GRUB" \
 			"configuration was NOT updated; restore the" \
 			"backup of /$GRUB_DROPIN if needed."
@@ -839,7 +835,7 @@ GRUB_CMDLINE_LINUX=\"\$GRUB_CMDLINE_LINUX$kernel_params\""
 
 apply_systemd_boot_params() {
 	local entry found=""
-	for entry in "${ROOT%/}"/boot/loader/entries/*.conf; do
+	for entry in /boot/loader/entries/*.conf; do
 		[ -e "$entry" ] || continue
 		if ! grep -q '^linux[[:space:]]' "$entry" 2>/dev/null; then
 			continue
@@ -859,7 +855,7 @@ apply_systemd_boot_params() {
 
 update_entry_options() {
 	local entry_path="$1"
-	local entry="${ROOT%/}${entry_path}"
+	local entry="${entry_path}"
 	local line missing param
 	line="$(grep -m1 '^options ' "$entry" 2>/dev/null || true)"
 	[ -n "$line" ] || line="options"
@@ -891,7 +887,7 @@ update_entry_options() {
 }
 
 apply_syslinux_params() {
-	local cfg="${ROOT%/}/boot/syslinux/syslinux.cfg"
+	local cfg="/boot/syslinux/syslinux.cfg"
 	if [ ! -f "$cfg" ]; then
 		warn "Syslinux configuration not found at $cfg."
 		return 0
@@ -1232,12 +1228,12 @@ existing_lsm_configuration() {
 	local out=""
 	out="$(
 		{
-			cat "${ROOT%/}/proc/cmdline" 2>/dev/null
+			cat "/proc/cmdline" 2>/dev/null
 			grep -hE '^[[:space:]]*(GRUB_CMDLINE_LINUX|options|APPEND)[[:space:]]' \
-				"${ROOT%/}/etc/default/grub" \
-				"${ROOT%/}/etc/default/grub.d/"*.cfg \
-				"${ROOT%/}/boot/loader/entries/"*.conf \
-				"${ROOT%/}/boot/syslinux/syslinux.cfg" \
+				"/etc/default/grub" \
+				"/etc/default/grub.d/"*.cfg \
+				"/boot/loader/entries/"*.conf \
+				"/boot/syslinux/syslinux.cfg" \
 				2>/dev/null || true
 		} | grep -oE 'lsm=[^[:space:]"]*' || true
 	)"
@@ -1264,7 +1260,7 @@ feature_linux_hardened() {
 	# The package's mkinitcpio hook regenerates the initramfs,
 	# but a bootable kernel must actually exist before we claim
 	# success.
-	if [ ! -f "${ROOT%/}/boot/vmlinuz-linux-hardened" ] &&
+	if [ ! -f "/boot/vmlinuz-linux-hardened" ] &&
 		[ "$DRY_RUN" = "0" ]; then
 		fatal "linux-hardened installed but no kernel image" \
 			"was found at /boot/vmlinuz-linux-hardened." \
@@ -1275,7 +1271,7 @@ feature_linux_hardened() {
 	case "$bootloader" in
 	grub)
 		if ! exec_ok grub-mkconfig -o \
-			"${ROOT%/}/boot/grub/grub.cfg"; then
+			"/boot/grub/grub.cfg"; then
 			fatal "Failed to regenerate GRUB configuration." \
 				"Your existing kernel entries in grub.cfg" \
 				"are unchanged."
@@ -1317,7 +1313,7 @@ feature_bubblewrap() {
 			"/usr/bin/bwrap (matches the former" \
 			"bubblewrap-suid package)?"
 		if is_yes "$ANSWER"; then
-			exec_ok chmod u+s "${ROOT%/}/usr/bin/bwrap"
+			exec_ok chmod u+s "/usr/bin/bwrap"
 		fi
 	fi
 }
@@ -1330,8 +1326,8 @@ feature_chaotic_aur() {
 		"apparmor.d prebuilt packages."
 	is_yes "$ANSWER" || return 0
 
-	if [ -f "${ROOT%/}/etc/pacman.conf" ] &&
-		grep -q '^\[chaotic-aur\]' "${ROOT%/}/etc/pacman.conf"; then
+	if [ -f "/etc/pacman.conf" ] &&
+		grep -q '^\[chaotic-aur\]' "/etc/pacman.conf"; then
 		log "Chaotic-AUR is already configured."
 		return 0
 	fi
@@ -1358,7 +1354,7 @@ feature_chaotic_aur() {
 	fi
 
 	backup_existing "/etc/pacman.conf"
-	cat >>"${ROOT%/}/etc/pacman.conf" <<'EOF'
+	cat >>"/etc/pacman.conf" <<'EOF'
 
 [chaotic-aur]
 Include = /etc/pacman.d/chaotic-mirrorlist
@@ -1377,7 +1373,7 @@ feature_apparmor_profiles() {
 		return 0
 	fi
 	if ! grep -q '^\[chaotic-aur\]' \
-		"${ROOT%/}/etc/pacman.conf" 2>/dev/null; then
+		"/etc/pacman.conf" 2>/dev/null; then
 		log "Skipping apparmor.d: requires Chaotic-AUR (or" \
 			"install the apparmor.d-git package from the AUR" \
 			"yourself)."
@@ -1401,7 +1397,7 @@ feature_hardened_malloc() {
 	is_yes "$ANSWER" || return 0
 
 	if ! grep -q '^\[chaotic-aur\]' \
-		"${ROOT%/}/etc/pacman.conf" 2>/dev/null; then
+		"/etc/pacman.conf" 2>/dev/null; then
 		warn "hardened_malloc is not in the official" \
 			"repositories. Build it from the AUR" \
 			"(hardened_malloc PKGBUILD) or add Chaotic-AUR." \
@@ -1449,9 +1445,9 @@ feature_microcode() {
 
 	# mkinitcpio and dracut embed the microcode into the
 	# initramfs automatically; no bootloader changes needed.
-	if [ -f "${ROOT%/}/etc/mkinitcpio.conf" ] &&
+	if [ -f "/etc/mkinitcpio.conf" ] &&
 		! grep -qE '^HOOKS=.*microcode' \
-			"${ROOT%/}/etc/mkinitcpio.conf"; then
+			"/etc/mkinitcpio.conf"; then
 		warn "The 'microcode' hook is missing from" \
 			"/etc/mkinitcpio.conf HOOKS. Add it and rebuild" \
 			"the initramfs for early loading."
@@ -1466,22 +1462,22 @@ feature_root_restrictions() {
 		local f
 		for f in su su-l; do
 			local pam="/etc/pam.d/$f"
-			[ -f "${ROOT%/}$pam" ] || continue
+			[ -f "$pam" ] || continue
 			if grep -q '^#auth[[:space:]]*required[[:space:]]*pam_wheel.so' \
-				"${ROOT%/}$pam"; then
+				"$pam"; then
 				backup_existing "$pam"
 				[ "$DRY_RUN" = "1" ] ||
 					sed -i \
 						's|^#auth\([[:space:]]*required[[:space:]]*pam_wheel.so.*\)|auth\1|' \
-						"${ROOT%/}$pam"
+						"$pam"
 				log "Enabled pam_wheel in $pam"
 				CHANGES=$((CHANGES + 1))
-			elif ! grep -q 'pam_wheel.so' "${ROOT%/}$pam"; then
+			elif ! grep -q 'pam_wheel.so' "$pam"; then
 				backup_existing "$pam"
 				[ "$DRY_RUN" = "1" ] ||
 					sed -i \
 						'/^auth[[:space:]]*sufficient[[:space:]]*pam_rootok.so/a auth		required	pam_wheel.so use_uid' \
-						"${ROOT%/}$pam"
+						"$pam"
 				log "Inserted pam_wheel in $pam"
 				CHANGES=$((CHANGES + 1))
 			else
@@ -1497,7 +1493,7 @@ feature_root_restrictions() {
 		exec_ok passwd -l root
 	fi
 
-	if [ -f "${ROOT%/}/etc/ssh/sshd_config" ]; then
+	if [ -f "/etc/ssh/sshd_config" ]; then
 		ask deny-root-ssh "Deny direct root login via SSH" \
 			"(drop-in sshd_config.d file)?"
 		if is_yes "$ANSWER"; then
@@ -1544,7 +1540,7 @@ Storage=none"
 		write_file "/etc/sysctl.d/99-arch-hardening-coredumps.conf" \
 			"# Managed by $PROJECT_NAME. See README.md.
 kernel.core_pattern=|/bin/false"
-		if [ -f "${ROOT%/}/etc/security/limits.conf" ]; then
+		if [ -f "/etc/security/limits.conf" ]; then
 			append_line_if_missing \
 				"/etc/security/limits.conf" "* hard core 0"
 		fi
@@ -1620,11 +1616,11 @@ install uvcvideo /bin/true"
 	if is_yes "$ANSWER"; then
 		local content
 		content="# Managed by $PROJECT_NAME. See README.md."
-		if [ -r "${ROOT%/}/proc/asound/modules" ]; then
+		if [ -r "/proc/asound/modules" ]; then
 			local mod
 			# shellcheck disable=SC2013
 			for mod in $(awk '{print $2}' \
-				"${ROOT%/}/proc/asound/modules" |
+				"/proc/asound/modules" |
 				awk '!x[$0]++'); do
 				content="$content
 install $mod /bin/true"
@@ -1726,14 +1722,14 @@ install_macchanger_service() {
 		return 0
 	fi
 	local target="/usr/lib/arch-hardening-script/spoof-mac-addresses"
-	mkdir -p "$(dirname "${ROOT%/}${target}")"
+	mkdir -p "$(dirname "${target}")"
 	local owner_args=()
 	if [ "$(id -u)" = "0" ]; then
 		owner_args=(-o root -g root)
 	fi
 	install -m 0755 "${owner_args[@]}" "$src" \
-		"${ROOT%/}${target}"
-	journal_add "C	${ROOT%/}${target}"
+		"${target}"
+	journal_add "C	${target}"
 
 	case "$init_system" in
 	systemd)
@@ -1744,20 +1740,20 @@ install_macchanger_service() {
 	openrc)
 		write_file "/etc/init.d/macspoof" \
 			"$(macspoof_openrc_script)"
-		chmod 0755 "${ROOT%/}/etc/init.d/macspoof"
+		chmod 0755 "/etc/init.d/macspoof"
 		svc_enable macspoof
 		;;
 	runit)
 		write_file "/etc/runit/sv/macspoof/run" \
 			"$(macspoof_runit_script)"
-		chmod 0755 "${ROOT%/}/etc/runit/sv/macspoof/run"
+		chmod 0755 "/etc/runit/sv/macspoof/run"
 		svc_enable macspoof
 		;;
 	s6)
 		write_file "/etc/s6/sv/macspoof/up" \
 			"$(macspoof_s6_script)"
 		write_file "/etc/s6/sv/macspoof/type" "oneshot"
-		chmod 0755 "${ROOT%/}/etc/s6/sv/macspoof/up"
+		chmod 0755 "/etc/s6/sv/macspoof/up"
 		svc_enable macspoof
 		;;
 	dinit)
@@ -1891,7 +1887,7 @@ feature_tor() {
 }
 
 configure_pacman_tor() {
-	local pacman_conf="${ROOT%/}/etc/pacman.conf"
+	local pacman_conf="/etc/pacman.conf"
 	[ -f "$pacman_conf" ] || {
 		warn "No /etc/pacman.conf found."
 		return 0
@@ -2023,13 +2019,13 @@ do_undo() {
 
 	if [ -n "$grub_touched" ] &&
 		command -v grub-mkconfig >/dev/null 2>&1 &&
-		[ -f "${ROOT%/}/boot/grub/grub.cfg" ]; then
+		[ -f "/boot/grub/grub.cfg" ]; then
 		if [ "$DRY_RUN" = "1" ]; then
 			log "Dry-run: would regenerate the GRUB" \
 				"configuration."
 		else
 			log "Regenerating GRUB configuration."
-			grub-mkconfig -o "${ROOT%/}/boot/grub/grub.cfg" ||
+			grub-mkconfig -o "/boot/grub/grub.cfg" ||
 				warn "grub-mkconfig failed during undo."
 		fi
 	fi
@@ -2047,9 +2043,7 @@ do_undo() {
 
 # ---- main ---------------------------------------------------------
 check_root() {
-	# An explicit alternate root (ARCH_HARDENING_TEST_ROOT) is
-	# treated as trusted; a normal run must be root.
-	if [ -n "$ROOT" ] || [ "$DRY_RUN" = "1" ]; then
+	if [ "$DRY_RUN" = "1" ]; then
 		return 0
 	fi
 	if [ "$(id -u)" -ne 0 ]; then
