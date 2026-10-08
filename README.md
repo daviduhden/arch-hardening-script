@@ -31,7 +31,7 @@ The measures are organized as layers (defense in depth):
 | Network security   | nftables default-deny inbound firewall        |
 | Local permissions  | su restricted to wheel, root account lock, SSH |
 | Hardware attack surface | USBGuard, FireWire blacklist, microcode   |
-| Privacy            | MAC randomization, IPv6 privacy extensions, umask |
+| Privacy            | MAC randomization, hostname, umask               |
 
 Running a hardening script does not make a system secure. It reduces
 exposure and raises the cost of specific attacks. Ongoing security
@@ -143,10 +143,13 @@ hiding boot output is not security.
 
 Parameters are accumulated and applied per bootloader:
 
-* **GRUB**: `/etc/default/grub.d/40-arch-hardening.cfg` (sourced by
-  GRUB's own `10_linux`, no fragile edits to `/etc/default/grub`),
-  then `grub-mkconfig` runs once. Existing administrator parameters
-  are preserved; the drop-in only appends.
+* **GRUB**: a marked block appended to `/etc/default/grub` (GRUB
+  only reads that file, not `/etc/default/grub.d/`) that extends
+  `GRUB_CMDLINE_LINUX`; then `grub-mkconfig` runs once. Existing
+  administrator parameters are preserved and the block is replaced
+  idempotently on later runs. The obsolete
+  `/etc/default/grub.d/40-arch-hardening.cfg` from older versions is
+  removed if present.
 * **systemd-boot**: parameters are appended idempotently to the
   `options` line of kernel entries under `/boot/loader/entries/`
   (entries for other OSes and non-vmlinuz loaders are skipped).
@@ -291,15 +294,15 @@ TLS, logs, Tor). Instead:
 
 ### IPv6
 
-Two independent choices:
+**Disable IPv6** (`ipv6.disable=1`): a network-policy choice to
+remove an attack surface; not a general security requirement and
+not recommended.
 
-* **Disable IPv6** (`ipv6.disable=1`): a network-policy choice to
-  remove an attack surface; not a general security requirement and
-  not recommended.
-* **IPv6 privacy extensions** (`net.ipv6.conf.*.use_tempaddr=2`):
-  applied via sysctl, NetworkManager (`ipv6.ip6-privacy=2` drop-in)
-  or systemd-networkd (`IPv6PrivacyExtensions=yes`), so temporary
-  addresses are preferred. Requires IPv6 to remain enabled.
+IPv6 privacy (temporary) addresses are *not* configured by this
+script. Enable them manually if wanted: `net.ipv6.conf.*.use_tempaddr=2`
+via sysctl, `ipv6.ip6-privacy=2` in a NetworkManager drop-in, or
+`IPv6PrivacyExtensions=yes` in a systemd-networkd `.network` file.
+Requires IPv6 to remain enabled.
 
 ### MAC address randomization
 
@@ -557,9 +560,10 @@ the following:
 * `/etc/sysctl.d/99-arch-hardening.conf` (and
   `99-arch-hardening-malloc.conf`, `99-arch-hardening-coredumps.conf`)
 * `/etc/modprobe.d/99-arch-hardening-*.conf`
-* `/etc/default/grub.d/40-arch-hardening.cfg`
+* the managed block in `/etc/default/grub`
 * `/etc/NetworkManager/conf.d/90-arch-hardening-*.conf`
-* `/etc/systemd/network/99-arch-hardening-*`
+* `/etc/systemd/network/99-arch-hardening-*` and the
+  `*.network.d/99-arch-hardening-hostname.conf` drop-ins
 * `/etc/systemd/coredump.conf.d/99-arch-hardening.conf`
 * `/etc/profile.d/99-arch-hardening-umask.sh`
 * `/etc/ssh/sshd_config.d/99-arch-hardening.conf`

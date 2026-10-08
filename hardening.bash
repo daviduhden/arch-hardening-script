@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-VERSION="2.0.1"
+VERSION="2.0.2"
 PROJECT_NAME="arch-hardening-script"
 STATE_DIR="/var/lib/arch-hardening-script"
 JOURNAL="$STATE_DIR/journal"
@@ -28,6 +28,7 @@ BACKUP_SUFFIX=".arch-hardening.bak"
 # sysctl / kernel parameter sets managed by this script.
 SYSCTL_FILE="etc/sysctl.d/99-arch-hardening.conf"
 MODPROBE_PREFIX="etc/modprobe.d/99-arch-hardening"
+# Legacy GRUB drop-in path (GRUB never reads it); removed if found.
 GRUB_DROPIN="etc/default/grub.d/40-arch-hardening.cfg"
 
 # ---- global state -------------------------------------------------
@@ -297,29 +298,6 @@ write_file() {
 	return 0
 }
 
-# remove_file <path>
-# Removes a file that this script previously created. Journals
-# nothing for files the script never created.
-remove_file() {
-	local path="$1"
-	if [ ! -e "$path" ]; then
-		return 0
-	fi
-	if ! journal_has "C	$path" && ! journal_has "M	$path"; then
-		warn "Refusing to remove file not managed by this" \
-			"script: $path"
-		return 1
-	fi
-	if [ "$DRY_RUN" = "1" ]; then
-		log "Dry-run: would remove $path"
-		CHANGES=$((CHANGES + 1))
-		return 0
-	fi
-	rm -f "$path"
-	log "Removed: $path"
-	CHANGES=$((CHANGES + 1))
-}
-
 # backup_existing <path>
 # Backs up an administrator-owned file once, before a targeted edit.
 backup_existing() {
@@ -575,27 +553,6 @@ svc_is_enabled() {
 	esac
 }
 
-svc_is_active() {
-	local svc="$1"
-	case "$init_system" in
-	systemd)
-		systemctl is-active --quiet "$svc"
-		;;
-	openrc)
-		rc-service "$svc" status >/dev/null 2>&1
-		;;
-	runit)
-		sv status "$svc" >/dev/null 2>&1
-		;;
-	s6)
-		s6-rc -u status "$svc" >/dev/null 2>&1
-		;;
-	dinit)
-		dinitctl status "$svc" >/dev/null 2>&1
-		;;
-	esac
-}
-
 svc_enable() {
 	local svc="$1"
 	if svc_is_enabled "$svc"; then
@@ -815,19 +772,58 @@ apply_kernel_params() {
 }
 
 apply_grub_params() {
-	local content
-	content="# Managed by $PROJECT_NAME. See README.md.
-GRUB_CMDLINE_LINUX=\"\$GRUB_CMDLINE_LINUX$kernel_params\""
-	write_file "/$GRUB_DROPIN" "$content"
-	if [ "$FILE_CHANGED" = "0" ]; then
+	local grub_default="/etc/default/grub"
+	local dropin="/$GRUB_DROPIN"
+	if [ ! -f "$grub_default" ]; then
+		warn "No $grub_default found; add these kernel" \
+			"parameters manually:$kernel_params"
+		return 0
+	fi
+
+	# GRUB only reads /etc/default/grub; it does not process
+	# /etc/default/grub.d, so extend GRUB_CMDLINE_LINUX there.
+	local begin="# >>> $PROJECT_NAME >>>"
+	local end="# <<< $PROJECT_NAME <<<"
+	local line
+	line="GRUB_CMDLINE_LINUX=\"\$GRUB_CMDLINE_LINUX$kernel_params\""
+
+	# Remove the obsolete drop-in written by older versions.
+	if [ -f "$dropin" ] &&
+		grep -qF "Managed by $PROJECT_NAME" "$dropin"; then
+		if [ "$DRY_RUN" = "1" ]; then
+			log "Dry-run: would remove obsolete $dropin"
+		else
+			rm -f "$dropin"
+			log "Removed obsolete $dropin"
+		fi
+	fi
+
+	if grep -qxF "$begin" "$grub_default" &&
+		grep -qxF "$line" "$grub_default" &&
+		grep -qxF "$end" "$grub_default"; then
 		log "GRUB parameters already configured."
 		return 0
 	fi
-	if ! exec_ok grub-mkconfig -o \
-		"/boot/grub/grub.cfg"; then
+	if [ "$DRY_RUN" = "1" ]; then
+		log "Dry-run: would update $grub_default"
+		CHANGES=$((CHANGES + 1))
+		return 0
+	fi
+	backup_existing "/etc/default/grub"
+	# Replace any previous managed block, then append the current
+	# one; the earlier GRUB_CMDLINE_LINUX definition is preserved.
+	sed -i "/^${begin}$/,/^${end}$/d" "$grub_default"
+	{
+		printf '%s\n' "$begin"
+		printf '%s\n' "$line"
+		printf '%s\n' "$end"
+	} >>"$grub_default"
+	log "Added kernel parameters to $grub_default."
+	CHANGES=$((CHANGES + 1))
+	if ! exec_ok grub-mkconfig -o "/boot/grub/grub.cfg"; then
 		fatal "grub-mkconfig failed. The generated GRUB" \
 			"configuration was NOT updated; restore the" \
-			"backup of /$GRUB_DROPIN if needed."
+			"backup of $grub_default if needed."
 	fi
 	journal_add "G"
 	log "Regenerated GRUB configuration."
@@ -1850,11 +1846,28 @@ feature_hostname() {
 hostname.send-hostname=0"
 			;;
 		systemd-networkd)
-			write_file "/etc/systemd/network/99-arch-hardening-hostname.network" \
-				"# Managed by $PROJECT_NAME. See README.md.
-[Network]
+			# networkd applies only the first matching
+			# .network file, so a standalone catch-all
+			# file would shadow the interface's real
+			# configuration. Add a [DHCPv4] drop-in to
+			# every existing .network file instead.
+			local net base found=""
+			for net in /usr/lib/systemd/network/*.network \
+				/etc/systemd/network/*.network; do
+				[ -e "$net" ] || continue
+				base="${net##*/}"
+				found="1"
+				write_file \
+					"/etc/systemd/network/${base}.d/99-arch-hardening-hostname.conf" \
+					"# Managed by $PROJECT_NAME. See README.md.
 [DHCPv4]
 SendHostname=no"
+			done
+			if [ -z "$found" ]; then
+				warn "No systemd-networkd .network files" \
+					"found; set SendHostname=no in your" \
+					"network file manually."
+			fi
 			;;
 		*)
 			warn "No supported network manager detected;" \
@@ -1897,6 +1910,13 @@ configure_pacman_tor() {
 			"/etc/pacman.conf. Not overwriting it."
 		return 0
 	fi
+	# XferCommand is an [options] directive. A directive placed
+	# outside any section makes pacman fail to parse the file.
+	if ! grep -q '^\[options\]' "$pacman_conf"; then
+		warn "No [options] section in /etc/pacman.conf;" \
+			"not configuring XferCommand."
+		return 0
+	fi
 	local line
 	line="XferCommand = /usr/bin/curl --socks5-hostname \
 localhost:9050 --continue-at - --fail --output %o %u"
@@ -1906,14 +1926,7 @@ localhost:9050 --continue-at - --fail --output %o %u"
 		return 0
 	fi
 	backup_existing "/etc/pacman.conf"
-	# XferCommand belongs in the [options] section, i.e.
-	# before the first repository section.
-	if grep -q '^\[' "$pacman_conf"; then
-		sed -i '0,/^\[/{s|^\[|'"$line"'\
-[|}' "$pacman_conf"
-	else
-		printf '%s\n' "$line" >>"$pacman_conf"
-	fi
+	sed -i "/^\[options\]/a $line" "$pacman_conf"
 	log "Configured pacman to download via Tor (SOCKS" \
 		"port 9050). Ensure Tor is running."
 	CHANGES=$((CHANGES + 1))
