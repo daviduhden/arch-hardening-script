@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-VERSION="2.0.2"
+VERSION="2.0.3"
 PROJECT_NAME="arch-hardening-script"
 STATE_DIR="/var/lib/arch-hardening-script"
 JOURNAL="$STATE_DIR/journal"
@@ -1054,6 +1054,61 @@ feature_disable_ipv6() {
 	if is_yes "$ANSWER"; then
 		kernel_param_add "ipv6.disable=1"
 	fi
+}
+
+feature_ipv6_privacy() {
+	# Temporary (privacy) addresses require IPv6 to stay enabled.
+	local param
+	for param in $kernel_params; do
+		if [ "${param%%=*}" = "ipv6.disable" ]; then
+			log "IPv6 is disabled; skipping privacy" \
+				"extensions."
+			return 0
+		fi
+	done
+
+	ask ipv6-privacy "Prefer IPv6 temporary (privacy)" \
+		"addresses for outgoing connections?"
+	is_yes "$ANSWER" || return 0
+
+	# Sysctl is the portable mechanism (the init system applies it
+	# at boot). The manager-specific settings keep the preference
+	# attached to the connection.
+	sysctl_add_line "net.ipv6.conf.all.use_tempaddr=2"
+	sysctl_add_line "net.ipv6.conf.default.use_tempaddr=2"
+	write_sysctl_file
+
+	case "$network_manager" in
+	networkmanager)
+		write_file \
+			"/etc/NetworkManager/conf.d/90-arch-hardening-ipv6-privacy.conf" \
+			"# Managed by $PROJECT_NAME. See README.md.
+[connection]
+ipv6.ip6-privacy=2"
+		;;
+	systemd-networkd)
+		# A standalone .network file would shadow the real
+		# interface configuration (networkd applies only the
+		# first match), so add a drop-in to every .network.
+		local net base found=""
+		for net in /usr/lib/systemd/network/*.network \
+			/etc/systemd/network/*.network; do
+			[ -e "$net" ] || continue
+			base="${net##*/}"
+			found="1"
+			write_file \
+				"/etc/systemd/network/${base}.d/99-arch-hardening-ipv6-privacy.conf" \
+				"# Managed by $PROJECT_NAME. See README.md.
+[Network]
+IPv6PrivacyExtensions=yes"
+		done
+		if [ -z "$found" ]; then
+			warn "No systemd-networkd .network files" \
+				"found; set IPv6PrivacyExtensions=yes" \
+				"manually."
+		fi
+		;;
+	esac
 }
 
 feature_firewall() {
@@ -2125,6 +2180,7 @@ main() {
 	feature_sysctl
 	feature_kernel_params
 	feature_disable_ipv6
+	feature_ipv6_privacy
 	feature_firewall
 	feature_time_sync
 	feature_apparmor

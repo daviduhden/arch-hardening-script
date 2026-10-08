@@ -31,7 +31,7 @@ The measures are organized as layers (defense in depth):
 | Network security   | nftables default-deny inbound firewall        |
 | Local permissions  | su restricted to wheel, root account lock, SSH |
 | Hardware attack surface | USBGuard, FireWire blacklist, microcode   |
-| Privacy            | MAC randomization, hostname, umask               |
+| Privacy            | IPv6 privacy, MAC randomization, hostname, umask |
 
 Running a hardening script does not make a system secure. It reduces
 exposure and raises the cost of specific attacks. Ongoing security
@@ -294,15 +294,17 @@ TLS, logs, Tor). Instead:
 
 ### IPv6
 
-**Disable IPv6** (`ipv6.disable=1`): a network-policy choice to
-remove an attack surface; not a general security requirement and
-not recommended.
+Two independent choices:
 
-IPv6 privacy (temporary) addresses are *not* configured by this
-script. Enable them manually if wanted: `net.ipv6.conf.*.use_tempaddr=2`
-via sysctl, `ipv6.ip6-privacy=2` in a NetworkManager drop-in, or
-`IPv6PrivacyExtensions=yes` in a systemd-networkd `.network` file.
-Requires IPv6 to remain enabled.
+* **Disable IPv6** (`ipv6.disable=1`): a network-policy choice to
+  remove an attack surface; not a general security requirement and
+  not recommended.
+* **IPv6 privacy extensions** (`net.ipv6.conf.*.use_tempaddr=2`):
+  prefer temporary source addresses for outgoing connections.
+  Applied via sysctl and, with a supported manager, via
+  NetworkManager (`ipv6.ip6-privacy=2`) or a systemd-networkd
+  `[Network]` `IPv6PrivacyExtensions=yes` drop-in. Skipped when
+  IPv6 is disabled; requires IPv6 to remain enabled.
 
 ### MAC address randomization
 
@@ -490,6 +492,7 @@ sysctl-strict=no
 kernel-params=yes
 kernel-params-strict=no
 disable-ipv6=no
+ipv6-privacy=no
 firewall=yes
 firewall-ssh=yes
 time-sync=yes
@@ -563,7 +566,7 @@ the following:
 * the managed block in `/etc/default/grub`
 * `/etc/NetworkManager/conf.d/90-arch-hardening-*.conf`
 * `/etc/systemd/network/99-arch-hardening-*` and the
-  `*.network.d/99-arch-hardening-hostname.conf` drop-ins
+  `*.network.d/99-arch-hardening-*.conf` drop-ins
 * `/etc/systemd/coredump.conf.d/99-arch-hardening.conf`
 * `/etc/profile.d/99-arch-hardening-umask.sh`
 * `/etc/ssh/sshd_config.d/99-arch-hardening.conf`
