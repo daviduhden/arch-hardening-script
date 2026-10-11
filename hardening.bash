@@ -36,6 +36,7 @@ DRY_RUN=0
 DISABLE_CHECKS=0
 CONFIG_FILE=""
 DO_UNDO=0
+IN_UNDO=0 # set while --undo replays the journal
 ANSWER="" # result of the last ask() call
 
 declare -A CONFIG_ANSWERS
@@ -138,7 +139,7 @@ ask() {
 		log "Dry-run: assuming yes for: $*"
 		return 0
 	fi
-	read -r -p "$* (y/n) " ANSWER
+	read -r -p "$* (y/n) " ANSWER || ANSWER=""
 	ANSWER="${ANSWER:-n}"
 }
 
@@ -169,7 +170,11 @@ ask_choice() {
 	fi
 	while :; do
 		printf '%s (%s) ' "$prompt" "$*"
-		read -r ANSWER
+		if ! read -r ANSWER; then
+			warn "End of input; choosing $1."
+			ANSWER="$1"
+			return 0
+		fi
 		local c
 		for c in "$@"; do
 			if [ "$ANSWER" = "$c" ]; then
@@ -197,6 +202,12 @@ load_config_file() {
 	while IFS= read -r line || [ -n "$line" ]; do
 		case "$line" in
 		"" | \#*) continue ;;
+		*=*) ;;
+		*)
+			warn "Ignoring malformed config line (no '='):" \
+				"$line"
+			continue
+			;;
 		esac
 		key="${line%%=*}"
 		value="${line#*=}"
@@ -227,6 +238,10 @@ load_config_file() {
 # ---- state journal (for --undo) ----------------------------------
 journal_add() {
 	[ "$DRY_RUN" = "0" ] || return 0
+	# Never grow the journal while --undo is replaying it: doing so
+	# could extend the file being read and make the loop re-process
+	# newly appended entries.
+	[ "$IN_UNDO" = "0" ] || return 0
 	mkdir -p "$STATE_DIR"
 	printf '%s\n' "$*" >>"$JOURNAL"
 }
@@ -265,19 +280,15 @@ write_file() {
 	mkdir -p "$(dirname "$path")"
 
 	# A file that already exists is administrator-owned: back it up
-	# once so --undo can restore it. Only a file this script creates
-	# gets a "C" (created) journal entry; recording both "M" and "C"
-	# for the same path would make --undo delete a file it should
-	# restore.
+	# (once) so --undo can restore it. Only a file this script
+	# creates gets a "C" (created) journal entry; recording both "M"
+	# and "C" for the same path would make --undo delete a file it
+	# should restore.
 	local existed=0
 	if [ -f "$path" ]; then
 		existed=1
 		if ! journal_has "C	$path"; then
-			local backup="${path}${BACKUP_SUFFIX}"
-			if [ ! -e "$backup" ]; then
-				cp -a "$path" "$backup"
-				journal_add "M	$path	$backup"
-			fi
+			backup_existing "$path"
 		fi
 	fi
 
@@ -420,12 +431,11 @@ install_pkgs() {
 }
 
 # install_pkgs_optional <pkg...>
-# Like install_pkgs, but a failure only produces a warning.
+# Like install_pkgs, but a failure only produces a warning and never
+# aborts the caller (its return value must stay 0 under `set -e`).
 install_pkgs_optional() {
-	if ! install_pkgs "$@"; then
+	install_pkgs "$@" ||
 		warn "Optional package installation failed; continuing."
-		return 1
-	fi
 }
 
 # ---- system detection --------------------------------------------
@@ -440,7 +450,7 @@ detect_distro() {
 	fi
 	distro_id="$(
 		grep -E '^ID=' "/etc/os-release" |
-			cut -d= -f2 | tr -d '"'
+			cut -d= -f2 | tr -d '"' || true
 	)"
 	case "$distro_id" in
 	arch | artix) : ;;
@@ -1433,7 +1443,10 @@ feature_chaotic_aur() {
 		error "Failed to import the Chaotic-AUR signing key."
 		return 1
 	fi
-	pacman-key --lsign-key 3056513887B78AEB
+	if ! pacman-key --lsign-key 3056513887B78AEB; then
+		error "Failed to locally sign the Chaotic-AUR key."
+		return 1
+	fi
 	if ! pacman -U --noconfirm \
 		'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst' \
 		'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst'; then
@@ -1838,7 +1851,9 @@ install_macchanger_service() {
 		owner_args=(-o root -g root)
 	fi
 	install -m 0755 "${owner_args[@]}" "$src" \
-		"${target}"
+		"${target}" ||
+		fatal "Failed to install the MAC spoofing script" \
+			"to ${target}."
 	journal_add "C	${target}"
 
 	case "$init_system" in
@@ -1850,20 +1865,26 @@ install_macchanger_service() {
 	openrc)
 		write_file "/etc/init.d/macspoof" \
 			"$(macspoof_openrc_script)"
-		chmod 0755 "/etc/init.d/macspoof"
+		chmod 0755 "/etc/init.d/macspoof" ||
+			warn "Failed to make /etc/init.d/macspoof" \
+				"executable."
 		svc_enable macspoof
 		;;
 	runit)
 		write_file "/etc/runit/sv/macspoof/run" \
 			"$(macspoof_runit_script)"
-		chmod 0755 "/etc/runit/sv/macspoof/run"
+		chmod 0755 "/etc/runit/sv/macspoof/run" ||
+			warn "Failed to make the runit macspoof" \
+				"service executable."
 		svc_enable macspoof
 		;;
 	s6)
 		write_file "/etc/s6/adminsv/macspoof/up" \
 			"$(macspoof_s6_script)"
 		write_file "/etc/s6/adminsv/macspoof/type" "oneshot"
-		chmod 0755 "/etc/s6/adminsv/macspoof/up"
+		chmod 0755 "/etc/s6/adminsv/macspoof/up" ||
+			warn "Failed to make the s6 macspoof service" \
+				"executable."
 		svc_enable macspoof
 		;;
 	dinit)
@@ -2101,6 +2122,7 @@ do_undo() {
 	log "Reverting changes recorded in $JOURNAL"
 	local grub_touched=""
 	local line
+	IN_UNDO=1
 	while IFS= read -r line || [ -n "$line" ]; do
 		case "$line" in
 		G) grub_touched="1" ;;
