@@ -53,7 +53,10 @@ spoof_mac_addresses() {
 			warn "could not bring $iface down; skipping"
 			continue
 		fi
-		macchanger -e "$iface" >/dev/null ||
+		# -A randomizes both the vendor OUI and the device
+		# bytes. (-e would keep the manufacturer prefix, which
+		# weakens the privacy goal of this measure.)
+		macchanger -A "$iface" >/dev/null ||
 			warn "macchanger failed on $iface"
 		ip link set dev "$iface" up ||
 			warn "could not bring $iface up"

@@ -320,6 +320,8 @@ detected network manager so it never races with a boot-time script:
 * No supported manager (e.g. plain dhcpcd): installs `macchanger`
   plus a small boot service generated for the active init system
   (this is the only case where the script writes its own service).
+  The service runs `macchanger -A`, which randomizes both the
+  vendor OUI and the device bytes on every boot.
 
 ### Hostname privacy
 
@@ -371,9 +373,11 @@ diagnostics; this option exists for disk/privacy-sensitive setups.
 Installs `usbguard` and offers to generate an allow-policy from the
 currently connected devices (plug in your keyboard, mouse and
 trusted devices first). Without a policy, *all* USB devices may be
-blocked, including keyboards. The service is enabled and started
-(`usbguard.service`, `usbguard-openrc`, …). New devices are denied
-until added to the policy (`usbguard append-rule`).
+blocked, including keyboards, so the script only enables and starts
+the service (`usbguard.service`, `usbguard-openrc`, …) when a
+policy was generated or already exists; otherwise it warns and
+leaves USBGuard disabled. New devices are denied until added to the
+policy (`usbguard append-rule`).
 
 ### FireWire blacklist
 
@@ -547,6 +551,7 @@ journal:
 
 * restores backed-up files,
 * removes files created by the script,
+* clears the setuid bit it set on `/usr/bin/bwrap`,
 * disables services it enabled (and re-enables ones it masked, if
   they were enabled before),
 * regenerates the GRUB configuration when it had modified it,
@@ -556,6 +561,12 @@ journal:
 Note: sysctl values remain active until reboot, and `--undo`
 reverts exactly what a previous run recorded — it cannot restore
 state that was changed by other tools in between.
+
+A few actions are deliberately **not** reverted automatically:
+`passwd -l root` is left in place (unlocking root automatically
+would re-enable password logins, a security regression), and
+one-shot `rfkill` calls are not persistent anyway. Undo the root
+lock manually with `passwd -u root` if you really need it.
 
 Manual rollback is also simple: every persistent change is one of
 the following:

@@ -264,11 +264,20 @@ write_file() {
 
 	mkdir -p "$(dirname "$path")"
 
-	if [ -f "$path" ] && ! journal_has "C	$path"; then
-		local backup="${path}${BACKUP_SUFFIX}"
-		if [ ! -e "$backup" ]; then
-			cp -a "$path" "$backup"
-			journal_add "M	$path	$backup"
+	# A file that already exists is administrator-owned: back it up
+	# once so --undo can restore it. Only a file this script creates
+	# gets a "C" (created) journal entry; recording both "M" and "C"
+	# for the same path would make --undo delete a file it should
+	# restore.
+	local existed=0
+	if [ -f "$path" ]; then
+		existed=1
+		if ! journal_has "C	$path"; then
+			local backup="${path}${BACKUP_SUFFIX}"
+			if [ ! -e "$backup" ]; then
+				cp -a "$path" "$backup"
+				journal_add "M	$path	$backup"
+			fi
 		fi
 	fi
 
@@ -289,7 +298,7 @@ write_file() {
 	fi
 	rm -f "$tmp"
 
-	if ! journal_has "C	$path"; then
+	if [ "$existed" = "0" ] && ! journal_has "C	$path"; then
 		journal_add "C	$path"
 	fi
 	log "Wrote: $path"
@@ -305,7 +314,6 @@ backup_existing() {
 	[ -f "$path" ] || return 1
 	if [ "$DRY_RUN" = "1" ]; then
 		log "Dry-run: would edit $path"
-		CHANGES=$((CHANGES + 1))
 		return 0
 	fi
 	local backup="${path}${BACKUP_SUFFIX}"
@@ -544,8 +552,8 @@ svc_is_enabled() {
 			[ -L "/etc/runit/runsvdir/default/$svc" ]
 		;;
 	s6)
-		s6-rc-bundle contents default 2>/dev/null |
-			grep -qx "$svc"
+		[ -e "/etc/s6/adminsv/default/contents.d/$svc" ] ||
+			[ -e "/etc/s6/sv/default/contents.d/$svc" ]
 		;;
 	dinit)
 		[ -e "/etc/dinit.d/boot.d/$svc" ]
@@ -576,7 +584,10 @@ svc_enable() {
 			"/etc/runit/runsvdir/default/$svc"
 		;;
 	s6)
-		s6-rc-bundle add default "$svc"
+		mkdir -p "/etc/s6/adminsv/default/contents.d"
+		: >"/etc/s6/adminsv/default/contents.d/$svc"
+		s6-db-reload ||
+			warn "s6-db-reload failed; reboot to apply."
 		;;
 	dinit)
 		dinitctl enable "$svc"
@@ -635,7 +646,9 @@ svc_disable() {
 		rm -f "/etc/runit/runsvdir/default/$svc"
 		;;
 	s6)
-		s6-rc-bundle delete default "$svc" 2>/dev/null || true
+		rm -f "/etc/s6/adminsv/default/contents.d/$svc"
+		s6-db-reload ||
+			warn "s6-db-reload failed; reboot to apply."
 		;;
 	dinit)
 		dinitctl disable "$svc" 2>/dev/null || true
@@ -668,7 +681,9 @@ svc_mask() {
 		;;
 	s6)
 		s6-rc -d change "$svc" 2>/dev/null || true
-		s6-rc-bundle delete default "$svc" 2>/dev/null || true
+		rm -f "/etc/s6/adminsv/default/contents.d/$svc"
+		s6-db-reload ||
+			warn "s6-db-reload failed; reboot to apply."
 		;;
 	dinit)
 		dinitctl stop "$svc" 2>/dev/null || true
@@ -722,6 +737,7 @@ service_name_for() {
 kernel_param_add() {
 	local param="$1"
 	local key="${param%%=*}"
+	local existing
 	for existing in $kernel_params; do
 		if [ "${existing%%=*}" = "$key" ]; then
 			log "Kernel parameter already staged: $param"
@@ -922,8 +938,8 @@ apply_syslinux_params() {
 			"has no APPEND line); add manually:$still"
 	else
 		log "Updated Syslinux configuration."
+		CHANGES=$((CHANGES + 1))
 	fi
-	CHANGES=$((CHANGES + 1))
 }
 
 # ---- sysctl ------------------------------------------------------
@@ -932,6 +948,7 @@ apply_syslinux_params() {
 sysctl_add_line() {
 	local line="$1"
 	local key="${line%%=*}"
+	local existing
 	for existing in $SYSCTL_LINES; do
 		if [ "${existing%%=*}" = "$key" ]; then
 			return 0
@@ -941,7 +958,7 @@ sysctl_add_line() {
 }
 
 write_sysctl_file() {
-	local content
+	local content line
 	content="# Managed by $PROJECT_NAME. See README.md.
 # Applied at boot by your init system's sysctl mechanism."
 	for line in $SYSCTL_LINES; do
@@ -960,11 +977,15 @@ $line"
 # ---- hostname ----------------------------------------------------
 set_hostname() {
 	local name="$1"
+	# Write /etc/hostname through write_file so the change is
+	# journalled and --undo can restore the previous name.
+	write_file "/etc/hostname" "$name"
 	if [ "$init_system" = "systemd" ] &&
 		command -v hostnamectl >/dev/null 2>&1; then
-		exec_ok hostnamectl set-hostname "$name"
+		exec_ok hostnamectl set-hostname "$name" ||
+			warn "Failed to apply the hostname now; it will" \
+				"take effect after reboot."
 	else
-		write_file "/etc/hostname" "$name"
 		exec_ok sh -c "command -v hostname >/dev/null 2>&1 &&
 			hostname '$name' || true"
 	fi
@@ -975,7 +996,8 @@ feature_update_system() {
 	ask update "Update the system (pacman -Syu) before" \
 		"hardening?"
 	if is_yes "$ANSWER"; then
-		exec_ok pacman -Syu --noconfirm
+		exec_ok pacman -Syu --noconfirm ||
+			warn "System upgrade failed; continuing anyway."
 	else
 		warn "Skipping system update. A full system upgrade" \
 			"(-Syu) is required before installing packages."
@@ -1221,7 +1243,8 @@ feature_time_sync() {
 		"privacy trade-off, not a security improvement."
 	if is_yes "$ANSWER"; then
 		if [ "$init_system" = "systemd" ]; then
-			exec_ok timedatectl set-ntp 0
+			exec_ok timedatectl set-ntp 0 ||
+				warn "Failed to disable NTP via timedatectl."
 			svc_mask systemd-timesyncd.service
 		else
 			if pkg_installed chrony; then
@@ -1251,15 +1274,20 @@ feature_apparmor() {
 
 	# AppArmor is compiled into the Arch kernels but not in the
 	# default LSM list; it must be added via lsm=.
-	if existing_lsm_configuration; then
-		if existing_lsm_configuration | grep -q apparmor; then
+	local existing_lsm
+	existing_lsm="$(existing_lsm_configuration || true)"
+	if [ -n "$existing_lsm" ]; then
+		case "$existing_lsm" in
+		*apparmor*)
 			log "AppArmor is already in an existing lsm=" \
 				"configuration."
-		else
+			;;
+		*)
 			warn "An lsm= parameter without AppArmor is" \
 				"already configured. Not overwriting it." \
 				"Add AppArmor manually to lsm=."
-		fi
+			;;
+		esac
 	else
 		kernel_param_add \
 			"lsm=landlock,lockdown,yama,integrity,apparmor,bpf"
@@ -1288,7 +1316,8 @@ existing_lsm_configuration() {
 				2>/dev/null || true
 		} | grep -oE 'lsm=[^[:space:]"]*' || true
 	)"
-	[ -n "$out" ]
+	[ -n "$out" ] || return 1
+	printf '%s\n' "$out"
 }
 
 feature_linux_hardened() {
@@ -1330,10 +1359,16 @@ feature_linux_hardened() {
 		journal_add "G"
 		;;
 	systemd-boot)
-		exec_ok bootctl update
+		if ! exec_ok bootctl update; then
+			warn "Failed to refresh the systemd-boot" \
+				"entries; run 'bootctl update' manually."
+		fi
 		;;
 	syslinux)
-		exec_ok extlinux --update
+		if ! exec_ok extlinux --update "/boot/syslinux"; then
+			warn "Failed to refresh the Syslinux bootloader;" \
+				"run 'extlinux --update /boot/syslinux' manually."
+		fi
 		;;
 	none)
 		warn "No supported bootloader detected. Configure a" \
@@ -1364,7 +1399,12 @@ feature_bubblewrap() {
 			"/usr/bin/bwrap (matches the former" \
 			"bubblewrap-suid package)?"
 		if is_yes "$ANSWER"; then
-			exec_ok chmod u+s "/usr/bin/bwrap"
+			if exec_ok chmod u+s "/usr/bin/bwrap"; then
+				journal_add "X	/usr/bin/bwrap"
+			else
+				warn "Failed to set the setuid bit on" \
+					"/usr/bin/bwrap."
+			fi
 		fi
 	fi
 }
@@ -1395,10 +1435,8 @@ feature_chaotic_aur() {
 	fi
 	pacman-key --lsign-key 3056513887B78AEB
 	if ! pacman -U --noconfirm \
-		'https://cdn-mirror.chaotic.cx/chaotic-aur/' \
-		'chaotic-keyring.pkg.tar.zst' \
-		'https://cdn-mirror.chaotic.cx/chaotic-aur/' \
-		'chaotic-mirrorlist.pkg.tar.zst'; then
+		'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst' \
+		'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst'; then
 		error "Failed to install the Chaotic-AUR keyring and" \
 			"mirrorlist."
 		return 1
@@ -1541,7 +1579,8 @@ feature_root_restrictions() {
 		"(recoverable via sudo or the console with the" \
 		"locked-out password)?"
 	if is_yes "$ANSWER"; then
-		exec_ok passwd -l root
+		exec_ok passwd -l root ||
+			warn "Failed to lock the root password."
 	fi
 
 	if [ -f "/etc/ssh/sshd_config" ]; then
@@ -1610,23 +1649,41 @@ feature_usbguard() {
 	ask usbguard-policy "Generate an allow policy from the" \
 		"currently connected USB devices? Make sure your" \
 		"keyboard, mouse and trusted devices are plugged in."
+	local has_policy="0"
 	if is_yes "$ANSWER"; then
 		if [ "$DRY_RUN" = "1" ]; then
 			log "Dry-run: usbguard generate-policy" \
 				"> /etc/usbguard/rules.conf"
+			has_policy="1"
 		else
 			local rules
 			rules="$(usbguard generate-policy 2>/dev/null)" ||
 				warn "usbguard generate-policy failed."
 			if [ -n "$rules" ]; then
 				write_file "/etc/usbguard/rules.conf" "$rules"
+				has_policy="1"
 			fi
 		fi
 	else
-		warn "No policy generated. All USB devices may be" \
-			"blocked once USBGuard starts. Generate one" \
-			"later with: usbguard generate-policy >" \
-			"/etc/usbguard/rules.conf"
+		# Enabling USBGuard without a policy can block every
+		# newly connected device, including the keyboard. Only
+		# proceed when a policy already exists.
+		if [ -s "/etc/usbguard/rules.conf" ]; then
+			log "Using the existing USBGuard policy."
+			has_policy="1"
+		else
+			warn "No policy generated. Generate one later" \
+				"with: usbguard generate-policy >" \
+				"/etc/usbguard/rules.conf"
+		fi
+	fi
+
+	if [ "$has_policy" != "1" ]; then
+		warn "USBGuard was installed but NOT enabled: without" \
+			"a policy all newly connected USB devices," \
+			"including keyboards, would be denied. Generate" \
+			"a policy, then enable the service manually."
+		return 0
 	fi
 
 	svc_enable_now "$(service_name_for usbguard)"
@@ -1689,11 +1746,13 @@ feature_wireless() {
 	ask rfkill "Block all wireless devices with rfkill" \
 		"(one-shot; not persistent across reboots)?"
 	if is_yes "$ANSWER"; then
-		exec_ok rfkill block all
+		exec_ok rfkill block all ||
+			warn "rfkill block all failed."
 		ask rfkill-wifi "Unblock WiFi again (keep Bluetooth" \
 			"blocked)?"
 		if is_yes "$ANSWER"; then
-			exec_ok rfkill unblock wifi
+			exec_ok rfkill unblock wifi ||
+				warn "rfkill unblock wifi failed."
 		fi
 	fi
 
@@ -1801,10 +1860,10 @@ install_macchanger_service() {
 		svc_enable macspoof
 		;;
 	s6)
-		write_file "/etc/s6/sv/macspoof/up" \
+		write_file "/etc/s6/adminsv/macspoof/up" \
 			"$(macspoof_s6_script)"
-		write_file "/etc/s6/sv/macspoof/type" "oneshot"
-		chmod 0755 "/etc/s6/sv/macspoof/up"
+		write_file "/etc/s6/adminsv/macspoof/type" "oneshot"
+		chmod 0755 "/etc/s6/adminsv/macspoof/up"
 		svc_enable macspoof
 		;;
 	dinit)
@@ -2064,14 +2123,18 @@ do_undo() {
 				if [ "$DRY_RUN" = "1" ]; then
 					log "Dry-run: would restore $target"
 				else
-					cp -a "$backup" "$target"
-					log "Restored: $target"
+					if cp -a "$backup" "$target"; then
+						log "Restored: $target"
+					else
+						warn "Failed to restore $target" \
+							"from $backup."
+					fi
 				fi
 			fi
 			;;
 		S+?*)
 			local svc="${line#S+	}"
-			svc_disable "$svc"
+			svc_disable "$svc" || true
 			;;
 		S-?*)
 			local masked="${line#S-	}"
@@ -2079,7 +2142,17 @@ do_undo() {
 			masked="${masked%%	*}"
 			svc_unmask "$masked"
 			if [ "$prev" = "1" ]; then
-				svc_enable "$masked"
+				svc_enable "$masked" || true
+			fi
+			;;
+		X?*)
+			local subid="${line#X	}"
+			if [ "$DRY_RUN" = "1" ]; then
+				log "Dry-run: would clear the setuid bit" \
+					"on $subid"
+			else
+				chmod u-s "$subid" 2>/dev/null || true
+				log "Cleared setuid bit on: $subid"
 			fi
 			;;
 		esac
@@ -2153,7 +2226,8 @@ summarize() {
 ending() {
 	ask reboot "Reboot now to apply all changes?"
 	if is_yes "$ANSWER"; then
-		exec_ok reboot
+		exec_ok reboot ||
+			warn "Reboot failed; please reboot manually."
 	fi
 }
 
