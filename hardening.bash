@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-VERSION="2.0.3"
+VERSION="2.0.4"
 PROJECT_NAME="arch-hardening-script"
 STATE_DIR="/var/lib/arch-hardening-script"
 JOURNAL="$STATE_DIR/journal"
@@ -49,6 +49,10 @@ cpu_vendor=""
 kernel_params="" # accumulated kernel command-line additions
 SYSCTL_LINES=""  # accumulated sysctl lines
 nft_allow_ssh=""
+nft_ssh_ports=""
+linux_hardened_requested=0
+apparmor_requested=0
+chaotic_aur_requested=0
 CHANGES=0
 
 # ---- logging ------------------------------------------------------
@@ -363,6 +367,11 @@ append_line_if_missing() {
 	if ! journal_has "C	$full"; then
 		backup_existing "$path"
 	fi
+	# Never concatenate the new line onto a file that lacks a
+	# final newline.
+	if [ -s "$full" ] && [ -n "$(tail -c 1 "$full" 2>/dev/null)" ]; then
+		printf '\n' >>"$full"
+	fi
 	printf '%s\n' "$line" >>"$full"
 	log "Appended to $full: $line"
 	CHANGES=$((CHANGES + 1))
@@ -404,8 +413,10 @@ pkg_installed() {
 }
 
 # install_pkgs <pkg...>
-# Installs missing packages without forcing a refresh. Never
-# creates a partial-upgrade state (no -Sy). Returns 1 on failure.
+# Installs missing packages without refreshing the package
+# database. A full system upgrade is still required before
+# installing packages on Arch; the caller is responsible for
+# warning when the user declined it. Returns 1 on failure.
 install_pkgs() {
 	local missing=()
 	local pkg
@@ -518,6 +529,12 @@ detect_bootloader() {
 		bootloader="none"
 	fi
 	log "Detected bootloader: $bootloader"
+	if [ "$bootloader" = "systemd-boot" ] &&
+		[ "$init_system" != "systemd" ]; then
+		warn "systemd-boot is in use without systemd as init." \
+			"Kernel entries are plain text and are edited" \
+			"directly; verify them before rebooting."
+	fi
 }
 
 detect_network_manager() {
@@ -569,6 +586,14 @@ svc_is_enabled() {
 		[ -e "/etc/dinit.d/boot.d/$svc" ]
 		;;
 	esac
+}
+
+# Only systemd has a real mask concept; the other init systems use
+# stop+disable as an approximation.
+svc_is_masked() {
+	local svc="$1"
+	[ "$init_system" = "systemd" ] || return 1
+	systemctl is-enabled "$svc" 2>/dev/null | grep -qx 'masked'
 }
 
 svc_enable() {
@@ -671,7 +696,9 @@ svc_disable() {
 svc_mask() {
 	local svc="$1"
 	local prev_enabled="0"
+	local prev_masked="0"
 	svc_is_enabled "$svc" && prev_enabled="1"
+	svc_is_masked "$svc" && prev_masked="1"
 	if [ "$DRY_RUN" = "1" ]; then
 		log "Dry-run: would mask service $svc"
 		CHANGES=$((CHANGES + 1))
@@ -700,7 +727,7 @@ svc_mask() {
 		dinitctl disable "$svc" 2>/dev/null || true
 		;;
 	esac
-	journal_add "S-	$svc	$prev_enabled"
+	journal_add "S-	$svc	$prev_enabled	$prev_masked"
 	log "Masked service: $svc"
 	CHANGES=$((CHANGES + 1))
 }
@@ -758,7 +785,7 @@ kernel_param_add() {
 }
 
 param_key_regex() {
-	printf '%s' "$1" | sed 's/[.]/\./g'
+	printf '%s' "$1" | sed 's/[][\\.^$*+?(){}|]/\\&/g'
 }
 
 # Does the given line already contain the parameter?
@@ -768,7 +795,8 @@ line_has_param() {
 	local key="${param%%=*}"
 	local key_re
 	key_re="$(param_key_regex "$key")"
-	printf '%s\n' " $line " |
+	# Kernel command lines may separate options with tabs.
+	printf '%s\n' " $(printf '%s' "$line" | tr '\t' ' ') " |
 		grep -qE " ${key_re}(=| |$)"
 }
 
@@ -819,6 +847,9 @@ apply_grub_params() {
 		if [ "$DRY_RUN" = "1" ]; then
 			log "Dry-run: would remove obsolete $dropin"
 		else
+			# Keep a restorable copy so --undo does not
+			# silently lose an administrator-visible file.
+			backup_existing "$dropin" || true
 			rm -f "$dropin"
 			log "Removed obsolete $dropin"
 		fi
@@ -846,32 +877,73 @@ apply_grub_params() {
 	} >>"$grub_default"
 	log "Added kernel parameters to $grub_default."
 	CHANGES=$((CHANGES + 1))
-	if ! exec_ok grub-mkconfig -o "/boot/grub/grub.cfg"; then
-		fatal "grub-mkconfig failed. The generated GRUB" \
-			"configuration was NOT updated; restore the" \
-			"backup of $grub_default if needed."
+	local grub_cfg="/boot/grub/grub.cfg"
+	if [ -f "$grub_cfg" ]; then
+		backup_existing "$grub_cfg" || true
+	fi
+	if ! exec_ok grub-mkconfig -o "$grub_cfg"; then
+		# Put the source configuration back; a half-written
+		# grub.cfg is worse than the previous one.
+		if [ -e "${grub_default}${BACKUP_SUFFIX}" ]; then
+			cp -a "${grub_default}${BACKUP_SUFFIX}" \
+				"$grub_default" 2>/dev/null || true
+		fi
+		if [ -e "${grub_cfg}${BACKUP_SUFFIX}" ]; then
+			cp -a "${grub_cfg}${BACKUP_SUFFIX}" \
+				"$grub_cfg" 2>/dev/null || true
+		fi
+		fatal "grub-mkconfig failed. The previous GRUB" \
+			"configuration was restored from backup."
 	fi
 	journal_add "G"
 	log "Regenerated GRUB configuration."
 }
 
+# Print the APPEND lines that belong to the Arch or Artix Linux
+# menu entry. Syslinux configurations differ between distributions;
+# both labels are handled.
+syslinux_target_appends() {
+	local cfg="$1"
+	awk '
+		/^[[:space:]]*MENU LABEL/ {
+			if ($0 ~ /(Arch|Artix)([[:space:]]+Linux)?[[:space:]]*$/) {
+				in_target = 1
+			} else {
+				in_target = 0
+			}
+			next
+		}
+		in_target && /^[[:space:]]*APPEND[[:space:]]/ { print }
+		in_target && /^[[:space:]]*$/ { in_target = 0 }
+	' "$cfg"
+}
+
 apply_systemd_boot_params() {
-	local entry found=""
-	for entry in /boot/loader/entries/*.conf; do
-		[ -e "$entry" ] || continue
-		if ! grep -q '^linux[[:space:]]' "$entry" 2>/dev/null; then
-			continue
-		fi
-		if ! grep -q 'vmlinuz' "$entry" 2>/dev/null; then
-			continue
-		fi
-		found="1"
-		update_entry_options \
-			"/boot/loader/entries/${entry##*/}"
+	local entry found="" dir
+	local entry_dirs=(
+		"/boot/loader/entries"
+		"/efi/loader/entries"
+		"/boot/efi/loader/entries"
+	)
+	for dir in "${entry_dirs[@]}"; do
+		[ -d "$dir" ] || continue
+		for entry in "$dir"/*.conf; do
+			[ -e "$entry" ] || continue
+			if ! grep -qE '^[[:space:]]*linux[[:space:]]' \
+				"$entry" 2>/dev/null; then
+				continue
+			fi
+			if ! grep -q 'vmlinuz' "$entry" 2>/dev/null; then
+				continue
+			fi
+			found="1"
+			update_entry_options "$entry"
+		done
 	done
 	if [ -z "$found" ]; then
 		warn "No systemd-boot kernel entries found under" \
-			"/boot/loader/entries/."
+			"/boot/loader/entries/, /efi/loader/entries/" \
+			"or /boot/efi/loader/entries/."
 	fi
 }
 
@@ -879,8 +951,12 @@ update_entry_options() {
 	local entry_path="$1"
 	local entry="${entry_path}"
 	local line missing param
-	line="$(grep -m1 '^options ' "$entry" 2>/dev/null || true)"
+	line="$(grep -m1 -E '^[[:space:]]*options([[:space:]]|$)' \
+		"$entry" 2>/dev/null || true)"
 	[ -n "$line" ] || line="options"
+	# Drop indentation before rebuilding the line; the sed
+	# replacement below re-adds it.
+	line="${line#"${line%%[![:space:]]*}"}"
 	missing=""
 	for param in $kernel_params; do
 		if ! line_has_param "$line" "$param"; then
@@ -898,10 +974,22 @@ update_entry_options() {
 	fi
 	backup_existing "$entry_path"
 	local newline="${line}${missing}"
-	if grep -q '^options ' "$entry"; then
-		sed -i "s|^options .*|$(printf '%s' "$newline" |
-			sed 's|[&\\|]|\\&|g')|" "$entry"
+	local newline_esc
+	newline_esc="$(printf '%s' "$newline" |
+		sed 's|[&\\|]|\\&|g')"
+	if grep -qE '^[[:space:]]*options([[:space:]]|$)' "$entry"; then
+		# Preserve indentation and replace every options line so
+		# an entry cannot keep a stale, conflicting copy.
+		sed -i -E \
+			"s|^([[:space:]]*)options([[:space:]].*)?$|\1${newline_esc}|" \
+			"$entry"
 	else
+		# Never concatenate a new options line onto a file that
+		# lacks a final newline.
+		if [ -s "$entry" ] &&
+			[ -n "$(tail -c 1 "$entry" 2>/dev/null)" ]; then
+			printf '\n' >>"$entry"
+		fi
 		printf '%s\n' "$newline" >>"$entry"
 	fi
 	log "Updated: $entry"
@@ -914,10 +1002,21 @@ apply_syslinux_params() {
 		warn "Syslinux configuration not found at $cfg."
 		return 0
 	fi
+	# Only the Arch/Artix Linux entry is ours to edit. Checking the
+	# whole file would let a parameter in another label hide a
+	# missing parameter in this one.
+	local target
+	target="$(syslinux_target_appends "$cfg")"
+	if [ -z "$target" ]; then
+		warn "No 'MENU LABEL Arch Linux' or 'MENU LABEL Artix" \
+			"Linux' entry with an APPEND line found in $cfg;" \
+			"add these parameters manually:$kernel_params"
+		return 0
+	fi
 	local missing param
 	missing=""
 	for param in $kernel_params; do
-		if ! line_has_param "$(cat "$cfg")" "$param"; then
+		if ! line_has_param "$target" "$param"; then
 			missing="$missing $param"
 		fi
 	done
@@ -931,21 +1030,42 @@ apply_syslinux_params() {
 		return 0
 	fi
 	backup_existing "/boot/syslinux/syslinux.cfg"
-	local missing_esc
-	missing_esc="$(printf '%s' "$missing" |
-		sed 's|[&\\|]|\\&|g')"
-	sed -i -E \
-		'/MENU LABEL Arch Linux/,/^[[:space:]]*$/ { /^[[:space:]]*APPEND[[:space:]]/ s|$|'"$missing_esc"'| }' \
-		"$cfg"
-	# The sed range only matches the "Arch Linux" label; verify the
-	# parameters actually landed instead of reporting a silent no-op.
+	# Edit only APPEND lines inside the Arch/Artix entry. A sed
+	# range ending at a blank line can spill into the next entry
+	# when the file does not use blank separators.
+	local edited
+	edited="$(make_tempfile)"
+	awk -v extra="$missing" '
+		/^[[:space:]]*MENU LABEL/ {
+			if ($0 ~ /(Arch|Artix)([[:space:]]+Linux)?[[:space:]]*$/) {
+				in_target = 1
+			} else {
+				in_target = 0
+			}
+			print
+			next
+		}
+		in_target && /^[[:space:]]*$/ { in_target = 0 }
+		in_target && /^[[:space:]]*APPEND[[:space:]]/ {
+			print $0 extra
+			next
+		}
+		{ print }
+	' "$cfg" >"$edited"
+	local cfg_mode
+	cfg_mode="$(stat -c '%a' "$cfg")"
+	install -m "$cfg_mode" "$edited" "$cfg"
+	rm -f "$edited"
+	# Verify that the parameters actually landed instead of
+	# reporting a silent no-op.
 	local still="" p
+	target="$(syslinux_target_appends "$cfg")"
 	for p in $missing; do
-		line_has_param "$(cat "$cfg")" "$p" || still="$still $p"
+		line_has_param "$target" "$p" || still="$still $p"
 	done
 	if [ -n "${still## }" ]; then
-		warn "Syslinux 'Arch Linux' entry not found (or it" \
-			"has no APPEND line); add manually:$still"
+		warn "Syslinux Arch/Artix entry could not be updated;" \
+			"add these parameters manually:$still"
 	else
 		log "Updated Syslinux configuration."
 		CHANGES=$((CHANGES + 1))
@@ -1158,9 +1278,14 @@ feature_firewall() {
 	nft_allow_ssh="no"
 	if sshd_running; then
 		ask firewall-ssh "SSH appears to be active. Allow" \
-			"inbound SSH (port 22) in the firewall?"
+			"inbound SSH in the firewall?"
 		if is_yes "$ANSWER"; then
 			nft_allow_ssh="yes"
+			nft_ssh_ports="$(sshd_configured_ports)"
+			[ -n "$nft_ssh_ports" ] || nft_ssh_ports="22"
+			log "Allowing SSH port(s):" \
+				"$(printf '%s\n' "$nft_ssh_ports" |
+					tr '\n' ' ')"
 		fi
 	fi
 
@@ -1179,34 +1304,66 @@ feature_firewall() {
 		rm -f "$tmp"
 	fi
 
+	warn "This ruleset drops forwarded traffic and replaces" \
+		"only the '$PROJECT_NAME' nftables table. Rules in" \
+		"other tables (Docker, libvirt, podman) that rely on" \
+		"forwarding may stop working."
 	write_file "/etc/nftables.conf" "$rules"
+	if [ "$init_system" = "systemd" ] &&
+		systemctl is-active --quiet nftables.service 2>/dev/null; then
+		warn "nftables is already active; the new ruleset" \
+			"takes effect on the next restart or reboot."
+	fi
 	svc_enable_now "$(service_name_for nftables)"
+}
+
+# Print the ports that sshd is configured to listen on. An empty
+# result means the OpenSSH default (22).
+sshd_configured_ports() {
+	grep -hEi '^[[:space:]]*Port[[:space:]]+' \
+		"/etc/ssh/sshd_config" \
+		"/etc/ssh/sshd_config.d/"*.conf 2>/dev/null |
+		awk '{print $2}' | sort -u || true
 }
 
 sshd_running() {
 	case "$init_system" in
 	systemd)
-		systemctl is-active --quiet sshd.service 2>/dev/null
+		systemctl is-active --quiet sshd.service 2>/dev/null ||
+			svc_is_enabled sshd.service
 		;;
 	openrc)
-		rc-service sshd status >/dev/null 2>&1
+		rc-service sshd status >/dev/null 2>&1 ||
+			svc_is_enabled sshd
 		;;
 	*)
-		pgrep -x sshd >/dev/null 2>&1
+		pgrep -x sshd >/dev/null 2>&1 ||
+			svc_is_enabled sshd
 		;;
 	esac
 }
 
 nftables_ruleset() {
-	local ssh_line=""
+	local ssh_line="" p
 	if [ "$nft_allow_ssh" = "yes" ]; then
-		ssh_line="		tcp dport 22 accept
+		for p in $nft_ssh_ports; do
+			case "$p" in
+			'' | *[!0-9]*)
+				warn "Ignoring invalid SSH port: $p"
+				continue
+				;;
+			esac
+			ssh_line="${ssh_line}		tcp dport ${p} accept
 "
+		done
 	fi
 	cat <<EOF
 #!/usr/bin/nft -f
 # Managed by $PROJECT_NAME. See README.md.
-flush ruleset
+# Remove only this project's table. Flushing the whole ruleset
+# would silently delete Docker/libvirt/podman and administrator
+# firewall rules.
+destroy table inet arch_hardening
 
 table inet arch_hardening {
 	chain input {
@@ -1234,6 +1391,10 @@ feature_time_sync() {
 		"signature validation)?"
 	if is_yes "$ANSWER"; then
 		if [ "$init_system" = "systemd" ]; then
+			if pkg_installed chrony || pkg_installed ntp; then
+				warn "Another time daemon is installed;" \
+					"systemd-timesyncd may conflict with it."
+			fi
 			svc_enable_now systemd-timesyncd.service
 			log "systemd-timesyncd is now enabled. For" \
 				"authenticated NTP (NTS) consider chrony" \
@@ -1256,6 +1417,14 @@ feature_time_sync() {
 			exec_ok timedatectl set-ntp 0 ||
 				warn "Failed to disable NTP via timedatectl."
 			svc_mask systemd-timesyncd.service
+			# Disabling synchronization must not leave
+			# another daemon running.
+			if pkg_installed chrony; then
+				svc_mask chrony.service || true
+			fi
+			if pkg_installed ntp; then
+				svc_mask ntpd.service || true
+			fi
 		else
 			if pkg_installed chrony; then
 				svc_mask "$(service_name_for chrony)"
@@ -1268,6 +1437,7 @@ feature_time_sync() {
 feature_apparmor() {
 	ask apparmor "Enable AppArmor (mandatory access control)?"
 	is_yes "$ANSWER" || return 0
+	apparmor_requested=1
 
 	install_pkgs apparmor || fatal "Could not install apparmor."
 
@@ -1284,23 +1454,29 @@ feature_apparmor() {
 
 	# AppArmor is compiled into the Arch kernels but not in the
 	# default LSM list; it must be added via lsm=.
-	local existing_lsm
-	existing_lsm="$(existing_lsm_configuration || true)"
-	if [ -n "$existing_lsm" ]; then
-		case "$existing_lsm" in
-		*apparmor*)
-			log "AppArmor is already in an existing lsm=" \
-				"configuration."
-			;;
-		*)
-			warn "An lsm= parameter without AppArmor is" \
-				"already configured. Not overwriting it." \
-				"Add AppArmor manually to lsm=."
-			;;
-		esac
+	local active_lsm
+	active_lsm="$(cat "/sys/kernel/security/lsm" 2>/dev/null || true)"
+	if printf '%s\n' "$active_lsm" | grep -qw 'apparmor'; then
+		log "AppArmor is already active in the running kernel."
 	else
-		kernel_param_add \
-			"lsm=landlock,lockdown,yama,integrity,apparmor,bpf"
+		local existing_lsm
+		existing_lsm="$(existing_lsm_configuration || true)"
+		if [ -n "$existing_lsm" ]; then
+			case "$existing_lsm" in
+			*apparmor*)
+				log "AppArmor is already in an existing lsm=" \
+					"configuration."
+				;;
+			*)
+				warn "An lsm= parameter without AppArmor is" \
+					"already configured. Not overwriting it." \
+					"Add AppArmor manually to lsm=."
+				;;
+			esac
+		else
+			kernel_param_add \
+				"lsm=landlock,lockdown,yama,integrity,apparmor,bpf"
+		fi
 	fi
 
 	if [ "$init_system" = "runit" ]; then
@@ -1315,15 +1491,42 @@ feature_apparmor() {
 
 existing_lsm_configuration() {
 	local out=""
+	local dir
 	out="$(
 		{
-			cat "/proc/cmdline" 2>/dev/null
-			grep -hE '^[[:space:]]*(GRUB_CMDLINE_LINUX|options|APPEND)[[:space:]]' \
-				"/etc/default/grub" \
-				"/etc/default/grub.d/"*.cfg \
-				"/boot/loader/entries/"*.conf \
-				"/boot/syslinux/syslinux.cfg" \
-				2>/dev/null || true
+			cat "/proc/cmdline" 2>/dev/null || true
+			# Unified kernel images and some mkinitcpio
+			# setups keep the command line here.
+			cat "/etc/kernel/cmdline" 2>/dev/null || true
+			# Only inspect the configuration that the
+			# detected bootloader actually reads. Stale
+			# files for other bootloaders must not suppress
+			# or contradict the real change.
+			case "$bootloader" in
+			grub)
+				[ -f "/etc/default/grub" ] &&
+					grep -hE \
+						'^[[:space:]]*GRUB_CMDLINE_LINUX(_DEFAULT)?=' \
+						"/etc/default/grub" || true
+				;;
+			systemd-boot)
+				for dir in "/boot/loader/entries" \
+					"/efi/loader/entries" \
+					"/boot/efi/loader/entries"; do
+					[ -d "$dir" ] || continue
+					grep -hE \
+						'^[[:space:]]*options([[:space:]]|$)' \
+						"$dir"/*.conf 2>/dev/null ||
+						true
+				done
+				;;
+			syslinux)
+				[ -f "/boot/syslinux/syslinux.cfg" ] &&
+					syslinux_target_appends \
+						"/boot/syslinux/syslinux.cfg" ||
+					true
+				;;
+			esac
 		} | grep -oE 'lsm=[^[:space:]"]*' || true
 	)"
 	[ -n "$out" ] || return 1
@@ -1334,6 +1537,7 @@ feature_linux_hardened() {
 	ask linux-hardened "Install the linux-hardened kernel" \
 		"(keeps your current kernel as a fallback)?"
 	is_yes "$ANSWER" || return 0
+	linux_hardened_requested=1
 
 	local already_installed=""
 	pkg_installed linux-hardened && already_installed="1"
@@ -1341,30 +1545,39 @@ feature_linux_hardened() {
 	install_pkgs linux-hardened linux-hardened-headers ||
 		fatal "Could not install linux-hardened."
 
-	if [ -n "$already_installed" ] && [ "$DRY_RUN" = "0" ]; then
-		log "linux-hardened was already installed;" \
-			"bootloader untouched."
-		return 0
-	fi
-
 	# The package's mkinitcpio hook regenerates the initramfs,
 	# but a bootable kernel must actually exist before we claim
-	# success.
-	if [ ! -f "/boot/vmlinuz-linux-hardened" ] &&
-		[ "$DRY_RUN" = "0" ]; then
+	# success. Check this on every run, including when the package
+	# was already present.
+	if [ "$DRY_RUN" = "0" ] &&
+		[ ! -f "/boot/vmlinuz-linux-hardened" ]; then
 		fatal "linux-hardened installed but no kernel image" \
 			"was found at /boot/vmlinuz-linux-hardened." \
 			"Keep booting your current kernel and" \
 			"investigate before rebooting."
 	fi
 
+	if [ -n "$already_installed" ] && [ "$DRY_RUN" = "0" ]; then
+		log "linux-hardened was already installed;" \
+			"bootloader untouched."
+		return 0
+	fi
+
 	case "$bootloader" in
 	grub)
+		if [ -f "/boot/grub/grub.cfg" ]; then
+			backup_existing "/boot/grub/grub.cfg" || true
+		fi
 		if ! exec_ok grub-mkconfig -o \
 			"/boot/grub/grub.cfg"; then
+			if [ -e "/boot/grub/grub.cfg${BACKUP_SUFFIX}" ]; then
+				cp -a "/boot/grub/grub.cfg${BACKUP_SUFFIX}" \
+					"/boot/grub/grub.cfg" 2>/dev/null ||
+					true
+			fi
 			fatal "Failed to regenerate GRUB configuration." \
-				"Your existing kernel entries in grub.cfg" \
-				"are unchanged."
+				"The previous grub.cfg was restored from" \
+				"backup."
 		fi
 		journal_add "G"
 		;;
@@ -1373,12 +1586,20 @@ feature_linux_hardened() {
 			warn "Failed to refresh the systemd-boot" \
 				"entries; run 'bootctl update' manually."
 		fi
+		warn "bootctl update does not create a boot entry" \
+			"for linux-hardened. Add /boot/loader/entries/" \
+			"linux-hardened.conf manually (or with your" \
+			"kernel-install tooling), pointing at" \
+			"/boot/vmlinuz-linux-hardened."
 		;;
 	syslinux)
 		if ! exec_ok extlinux --update "/boot/syslinux"; then
 			warn "Failed to refresh the Syslinux bootloader;" \
 				"run 'extlinux --update /boot/syslinux' manually."
 		fi
+		warn "extlinux --update does not create a LABEL for" \
+			"linux-hardened. Add a Syslinux entry for" \
+			"/boot/vmlinuz-linux-hardened manually."
 		;;
 	none)
 		warn "No supported bootloader detected. Configure a" \
@@ -1396,13 +1617,15 @@ feature_bubblewrap() {
 	is_yes "$ANSWER" || return 0
 
 	install_pkgs bubblewrap || warn "Could not install bubblewrap."
-	if ! pkg_installed bubblewrap; then
+	if [ "$DRY_RUN" = "0" ] && ! pkg_installed bubblewrap; then
 		return 0
 	fi
 
 	# linux-hardened disables unprivileged user namespaces, so
-	# plain bubblewrap cannot create sandboxes there.
-	if pkg_installed linux-hardened; then
+	# plain bubblewrap cannot create sandboxes there. During a
+	# dry run linux-hardened is only staged, not installed.
+	if pkg_installed linux-hardened ||
+		[ "$linux_hardened_requested" = "1" ]; then
 		warn "linux-hardened disables unprivileged user" \
 			"namespaces; bubblewrap needs the setuid fallback."
 		ask bubblewrap-suid "Set the setuid bit on" \
@@ -1430,11 +1653,17 @@ feature_chaotic_aur() {
 	if [ -f "/etc/pacman.conf" ] &&
 		grep -q '^\[chaotic-aur\]' "/etc/pacman.conf"; then
 		log "Chaotic-AUR is already configured."
+		chaotic_aur_requested=1
 		return 0
 	fi
 
 	if [ "$DRY_RUN" = "1" ]; then
-		log "Dry-run: would add Chaotic-AUR repository."
+		log "Dry-run: would import and sign the Chaotic-AUR" \
+			"key, install chaotic-keyring/chaotic-mirrorlist," \
+			"add [chaotic-aur] to /etc/pacman.conf and run" \
+			"pacman -Syu."
+		CHANGES=$((CHANGES + 2))
+		chaotic_aur_requested=1
 		return 0
 	fi
 
@@ -1467,15 +1696,22 @@ EOF
 	if ! pacman -Syu --noconfirm; then
 		fatal "pacman -Syu failed after adding Chaotic-AUR."
 	fi
+	chaotic_aur_requested=1
 	CHANGES=$((CHANGES + 1))
 }
 
 feature_apparmor_profiles() {
-	if ! pkg_installed apparmor; then
+	if ! pkg_installed apparmor &&
+		[ "$apparmor_requested" != "1" ]; then
 		return 0
 	fi
-	if ! grep -q '^\[chaotic-aur\]' \
-		"/etc/pacman.conf" 2>/dev/null; then
+	# A manually installed AUR package needs no third-party
+	# repository; only require Chaotic-AUR when the package is
+	# actually missing.
+	if ! pkg_installed apparmor.d-git &&
+		[ "$chaotic_aur_requested" != "1" ] &&
+		! grep -q '^\[chaotic-aur\]' \
+			"/etc/pacman.conf" 2>/dev/null; then
 		log "Skipping apparmor.d: requires Chaotic-AUR (or" \
 			"install the apparmor.d-git package from the AUR" \
 			"yourself)."
@@ -1498,8 +1734,10 @@ feature_hardened_malloc() {
 		"compatibility-sensitive malloc replacement)?"
 	is_yes "$ANSWER" || return 0
 
-	if ! grep -q '^\[chaotic-aur\]' \
-		"/etc/pacman.conf" 2>/dev/null; then
+	if ! pkg_installed hardened_malloc &&
+		[ "$chaotic_aur_requested" != "1" ] &&
+		! grep -q '^\[chaotic-aur\]' \
+			"/etc/pacman.conf" 2>/dev/null; then
 		warn "hardened_malloc is not in the official" \
 			"repositories. Build it from the AUR" \
 			"(hardened_malloc PKGBUILD) or add Chaotic-AUR." \
@@ -1521,6 +1759,13 @@ vm.max_map_count = 1048576"
 		"This breaks some applications (e.g. Electron apps," \
 		"games) and costs performance. NOT recommended."
 	if is_yes "$ANSWER"; then
+		if [ ! -e "/usr/lib/libhardened_malloc.so" ] &&
+			[ "$DRY_RUN" = "0" ]; then
+			warn "/usr/lib/libhardened_malloc.so does not" \
+				"exist; refusing to add it to" \
+				"/etc/ld.so.preload."
+			return 0
+		fi
 		append_line_if_missing "/etc/ld.so.preload" \
 			"/usr/lib/libhardened_malloc.so"
 	else
@@ -1561,24 +1806,43 @@ feature_microcode() {
 feature_root_restrictions() {
 	ask restrict-su "Restrict su to members of the wheel group?"
 	if is_yes "$ANSWER"; then
-		local f
+		# An empty wheel group would lock out su entirely.
+		if command -v getent >/dev/null 2>&1; then
+			local wheel_members
+			wheel_members="$(getent group wheel 2>/dev/null |
+				cut -d: -f4 || true)"
+			if [ -z "$wheel_members" ]; then
+				warn "The wheel group has no listed members." \
+					"Add your administrative user to wheel" \
+					"before restricting su."
+			fi
+		fi
+		local f wheel_re rootok_re
+		wheel_re='^(#[[:space:]]*)(auth[[:space:]]+required'
+		wheel_re+='[[:space:]]+pam_wheel[.]so.*)$'
+		rootok_re='^[[:space:]]*auth[[:space:]]+sufficient'
+		rootok_re+='[[:space:]]+pam_rootok[.]so'
 		for f in su su-l; do
 			local pam="/etc/pam.d/$f"
 			[ -f "$pam" ] || continue
-			if grep -q '^#auth[[:space:]]*required[[:space:]]*pam_wheel.so' \
-				"$pam"; then
+			if grep -qE "$wheel_re" "$pam"; then
 				backup_existing "$pam"
 				[ "$DRY_RUN" = "1" ] ||
-					sed -i \
-						's|^#auth\([[:space:]]*required[[:space:]]*pam_wheel.so.*\)|auth\1|' \
+					sed -i -E \
+						"s|${wheel_re}|\2|" \
 						"$pam"
 				log "Enabled pam_wheel in $pam"
 				CHANGES=$((CHANGES + 1))
-			elif ! grep -q 'pam_wheel.so' "$pam"; then
+			elif ! grep -q 'pam_wheel[.]so' "$pam"; then
+				if ! grep -qE "$rootok_re" "$pam"; then
+					warn "No pam_rootok.so line in $pam;" \
+						"add pam_wheel.so use_uid manually."
+					continue
+				fi
 				backup_existing "$pam"
 				[ "$DRY_RUN" = "1" ] ||
-					sed -i \
-						'/^auth[[:space:]]*sufficient[[:space:]]*pam_rootok.so/a auth		required	pam_wheel.so use_uid' \
+					sed -i -E \
+						"/${rootok_re}/a auth		required	pam_wheel.so use_uid" \
 						"$pam"
 				log "Inserted pam_wheel in $pam"
 				CHANGES=$((CHANGES + 1))
@@ -1589,8 +1853,9 @@ feature_root_restrictions() {
 	fi
 
 	ask lock-root "Lock the root account password" \
-		"(recoverable via sudo or the console with the" \
-		"locked-out password)?"
+		"(recover with sudo or another administrative" \
+		"account; the locked password cannot be used at" \
+		"the console)?"
 	if is_yes "$ANSWER"; then
 		exec_ok passwd -l root ||
 			warn "Failed to lock the root password."
@@ -1601,13 +1866,45 @@ feature_root_restrictions() {
 			"(drop-in sshd_config.d file)?"
 		if is_yes "$ANSWER"; then
 			local dropin="/etc/ssh/sshd_config.d/99-arch-hardening.conf"
+			if ! grep -qE \
+				'^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/\*\.conf' \
+				"/etc/ssh/sshd_config"; then
+				warn "/etc/ssh/sshd_config does not include" \
+					"/etc/ssh/sshd_config.d/*.conf; the" \
+					"drop-in may be ignored."
+			fi
 			write_file "$dropin" \
 				"# Managed by $PROJECT_NAME. See README.md.
 PermitRootLogin no"
-			if command -v sshd >/dev/null 2>&1 &&
-				! exec_ok sshd -t; then
-				fatal "sshd -t rejected the generated" \
-					"configuration; remove $dropin."
+			if command -v sshd >/dev/null 2>&1; then
+				if ! exec_ok sshd -t; then
+					# Do not leave an invalid drop-in in
+					# the SSH configuration.
+					if [ -e "${dropin}${BACKUP_SUFFIX}" ]; then
+						cp -a "${dropin}${BACKUP_SUFFIX}" \
+							"$dropin" 2>/dev/null ||
+							true
+					else
+						rm -f "$dropin"
+					fi
+					fatal "sshd -t rejected the generated" \
+						"configuration; the drop-in was" \
+						"reverted."
+				fi
+				if [ "$DRY_RUN" = "0" ]; then
+					local effective
+					if ! effective="$(sshd -T 2>/dev/null)"; then
+						warn "Could not verify the effective" \
+							"sshd configuration with sshd -T."
+					elif ! printf '%s\n' "$effective" |
+						grep -qiE \
+							'^permitrootlogin[[:space:]]+no$'; then
+						warn "The effective sshd configuration" \
+							"still permits root login. Check" \
+							"Include order and other" \
+							"sshd_config.d/*.conf files."
+					fi
+				fi
 			fi
 		fi
 	fi
@@ -1756,8 +2053,11 @@ install $mod /bin/true"
 }
 
 feature_wireless() {
-	ask rfkill "Block all wireless devices with rfkill" \
-		"(one-shot; not persistent across reboots)?"
+	ask rfkill "Block all wireless devices with rfkill now?" \
+		"This immediately drops Wi-Fi, WWAN and Bluetooth," \
+		"including any remote session carried over them." \
+		"It is not reliably persistent across reboots" \
+		"(systemd may restore it). Continue?"
 	if is_yes "$ANSWER"; then
 		exec_ok rfkill block all ||
 			warn "rfkill block all failed."
@@ -1816,11 +2116,30 @@ MACAddressPolicy=${mode}"
 		;;
 	iwd)
 		# Modern iwd already randomizes per-network by
-		# default; make it explicit.
-		append_line_if_missing "/etc/iwd/main.conf" \
-			"[General]"
-		append_line_if_missing "/etc/iwd/main.conf" \
-			"AddressRandomization=network"
+		# default; make it explicit. Insert into [General]
+		# when it exists so the key does not land in whatever
+		# section happens to be last.
+		local iwd_conf="/etc/iwd/main.conf"
+		if grep -qx 'AddressRandomization=network' \
+			"$iwd_conf" 2>/dev/null; then
+			log "iwd already randomizes MAC addresses."
+		elif grep -q '^AddressRandomization=' \
+			"$iwd_conf" 2>/dev/null; then
+			warn "iwd already has an AddressRandomization" \
+				"setting; not overwriting it."
+		elif grep -qx '\[General\]' "$iwd_conf" 2>/dev/null; then
+			backup_existing "$iwd_conf"
+			[ "$DRY_RUN" = "1" ] ||
+				sed -i \
+					'/^\[General\]$/a AddressRandomization=network' \
+					"$iwd_conf"
+			log "Enabled iwd MAC randomization."
+			CHANGES=$((CHANGES + 1))
+		else
+			append_line_if_missing "$iwd_conf" "[General]"
+			append_line_if_missing "$iwd_conf" \
+				"AddressRandomization=network"
+		fi
 		;;
 	*)
 		log "No supported network manager detected; using" \
@@ -1845,16 +2164,14 @@ install_macchanger_service() {
 		return 0
 	fi
 	local target="/usr/lib/arch-hardening-script/spoof-mac-addresses"
-	mkdir -p "$(dirname "${target}")"
-	local owner_args=()
-	if [ "$(id -u)" = "0" ]; then
-		owner_args=(-o root -g root)
-	fi
-	install -m 0755 "${owner_args[@]}" "$src" \
-		"${target}" ||
-		fatal "Failed to install the MAC spoofing script" \
-			"to ${target}."
-	journal_add "C	${target}"
+	local target_content
+	target_content="$(cat "$src")"
+	# write_file records "C" only for a new file and "M" for a
+	# pre-existing administrator file, so reruns are idempotent
+	# and --undo can restore the original.
+	write_file "$target" "$target_content"
+	chmod 0755 "$target" ||
+		warn "Failed to make $target executable."
 
 	case "$init_system" in
 	systemd)
@@ -1967,6 +2284,9 @@ feature_hostname() {
 		"itself become a stable identifier."
 	if is_yes "$ANSWER"; then
 		set_hostname host
+		warn "/etc/hosts was not modified. Local name" \
+			"resolution and some tools may still refer to" \
+			"the previous hostname; review /etc/hosts."
 	fi
 
 	ask dhcp-hostname "Stop announcing the hostname to" \
@@ -2040,6 +2360,11 @@ configure_pacman_tor() {
 		warn "No /etc/pacman.conf found."
 		return 0
 	}
+	if ! command -v curl >/dev/null 2>&1; then
+		warn "curl is required for the Tor XferCommand but" \
+			"is not installed; not configuring it."
+		return 0
+	fi
 	if grep -q '^XferCommand' "$pacman_conf"; then
 		warn "An XferCommand is already configured in" \
 			"/etc/pacman.conf. Not overwriting it."
@@ -2131,9 +2456,10 @@ do_undo() {
 			if [ -e "$created" ]; then
 				if [ "$DRY_RUN" = "1" ]; then
 					log "Dry-run: would remove $created"
-				else
-					rm -f "$created"
+				elif rm -f "$created"; then
 					log "Removed: $created"
+				else
+					warn "Failed to remove $created."
 				fi
 			fi
 			;;
@@ -2152,6 +2478,9 @@ do_undo() {
 							"from $backup."
 					fi
 				fi
+			else
+				warn "Backup missing for $target; not" \
+					"restored."
 			fi
 			;;
 		S+?*)
@@ -2162,7 +2491,18 @@ do_undo() {
 			local masked="${line#S-	}"
 			local prev="${masked#*	}"
 			masked="${masked%%	*}"
-			svc_unmask "$masked"
+			# Older journals have only two fields. Only
+			# unmask when this script applied the mask,
+			# never remove an administrator's pre-existing
+			# mask.
+			local was_masked="0"
+			if [ "$prev" != "${prev#*	}" ]; then
+				was_masked="${prev#*	}"
+				prev="${prev%%	*}"
+			fi
+			if [ "$was_masked" != "1" ]; then
+				svc_unmask "$masked"
+			fi
 			if [ "$prev" = "1" ]; then
 				svc_enable "$masked" || true
 			fi
@@ -2282,7 +2622,10 @@ main() {
 	feature_apparmor
 	feature_linux_hardened
 	feature_bubblewrap
-	feature_chaotic_aur
+	# Chaotic-AUR is optional and may fail independently (network,
+	# key server). Do not abort the remaining measures.
+	feature_chaotic_aur ||
+		warn "Chaotic-AUR setup failed; continuing without it."
 	feature_apparmor_profiles
 	feature_hardened_malloc
 	feature_microcode

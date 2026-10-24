@@ -2,11 +2,13 @@
 
 ## Overview
 
-`hardening.bash` is an interactive, idempotent hardening and privacy
+`hardening.bash` is an interactive, re-runnable hardening and privacy
 configuration script for **Arch Linux** and **Artix Linux**. It
 applies a set of individually reviewed measures, explains what each
-one does before asking, and records every change so it can be
-reverted with `--undo`.
+one does before asking, and records most configuration changes so
+they can be reverted with `--undo`. File and service changes are
+idempotent where possible; the initial full upgrade, USBGuard policy
+regeneration, and runtime actions are not.
 
 The script targets single-user desktop/laptop workstations. It does
 **not** attempt to:
@@ -109,9 +111,10 @@ Deliberately **removed** from the previous version of this project
 * `vm.unprivileged_userfaultfd=0` — already the kernel default.
 
 The sysctls are written to
-`/etc/sysctl.d/99-arch-hardening.conf` and applied at boot by the
-init system's sysctl mechanism (systemd, OpenRC, runit, s6 and
-dinit all process `/etc/sysctl.d/`).
+`/etc/sysctl.d/99-arch-hardening.conf` and are applied at boot by
+the init system's sysctl mechanism. Verify that your init system
+processes `/etc/sysctl.d/`; the script does not install a separate
+sysctl service.
 
 ### Kernel hardening: boot parameters
 
@@ -151,11 +154,15 @@ Parameters are accumulated and applied per bootloader:
   `/etc/default/grub.d/40-arch-hardening.cfg` from older versions is
   removed if present.
 * **systemd-boot**: parameters are appended idempotently to the
-  `options` line of kernel entries under `/boot/loader/entries/`
-  (entries for other OSes and non-vmlinuz loaders are skipped).
-  Each entry is backed up before editing.
-* **Syslinux**: parameters are appended to the `APPEND` line of the
-  `MENU LABEL Arch Linux` entry.
+  `options` line of kernel entries under `/boot/loader/entries/`,
+  `/efi/loader/entries/`, and `/boot/efi/loader/entries/` (entries
+  for other OSes and non-vmlinuz loaders are skipped). Each entry is
+  backed up before editing. If systemd-boot is used without systemd,
+  a warning is shown.
+* **Syslinux**: parameters are appended to `APPEND` lines inside the
+  `MENU LABEL Arch Linux` or `MENU LABEL Artix Linux` entry. Other
+  entries are left untouched; if neither label is found, the script
+  warns and makes no change.
 
 ### AppArmor
 
@@ -181,9 +188,10 @@ only enables the mechanism. Profiles are what do the work.
 
 ### AppArmor profiles (apparmor.d)
 
-Optional. Requires the Chaotic-AUR repository (or manual
-installation of the `apparmor.d-git` AUR package). The profiles are
-loaded in enforce mode. Sources and caveats:
+Optional. Requires the Chaotic-AUR repository, or a manual
+installation of the `apparmor.d-git` AUR package; if the package is
+already installed, the repository check is skipped. The profiles
+are loaded in enforce mode. Sources and caveats:
 
 * upstream project: <https://github.com/roddhjav/apparmor.d>
 * the Arch Wiki notes the project "is not currently stable" — expect
@@ -206,10 +214,17 @@ Writes `/etc/nftables.conf` with a default-deny **inbound** policy:
   is not filtered.
 
 The ruleset is validated with `nft -c -f` **before** it is written.
-If an SSH daemon is detected as running, the script asks whether to
-keep port 22 open to avoid locking out remote administration. The
-service is enabled and started (`nftables.service`, or the Artix
-init-specific service).
+It replaces only the `arch_hardening` table; it does not flush other
+tables. Because the table includes a default-drop `forward` chain,
+container and virtual-machine forwarding (Docker, libvirt, podman)
+can stop working even though their own tables are preserved. If an
+SSH daemon is detected as running or enabled, the script asks
+whether to allow inbound SSH to avoid locking out remote
+administration; when confirmed, every `Port` configured in
+`sshd_config`/`sshd_config.d` is allowed (default 22). The service
+is enabled and started (`nftables.service`, or the Artix
+init-specific service). If it was already active, the new file is
+loaded on the next restart or reboot.
 
 ### linux-hardened
 
@@ -217,8 +232,12 @@ Optional. Installs `linux-hardened` and `linux-hardened-headers`
 while **keeping your current kernel as a fallback** (no default
 entry is rewritten; select the kernel in the boot menu). The
 package's mkinitcpio hook regenerates the initramfs; the script
-verifies the kernel image exists, then refreshes GRUB (or
+verifies the kernel image on every run, then refreshes GRUB (or
 `bootctl update` / `extlinux --update`) only on the first install.
+On systemd-boot and Syslinux, the refresh command (`bootctl
+update` or `extlinux --update`) does **not** create a kernel entry
+for linux-hardened; the script warns and you must add the entry
+manually.
 
 Known interactions:
 
@@ -249,18 +268,21 @@ Optional and clearly labeled: Chaotic-AUR is an **unofficial
 third-party binary repository** that expands pacman's supply-chain
 trust boundary. It is offered only as a source for prebuilt
 `hardened_malloc` and `apparmor.d` packages, uses the official
-Chaotic-AUR signing key (imported over HTTPS packages, never
-`TrustAll`, `SigLevel` unchanged), and is made idempotent. Adding
-it runs a full `pacman -Syu` afterwards to avoid partial upgrades.
-Adding this repository is **not a security improvement**; do not
-enable it unless you need one of those packages.
+Chaotic-AUR signing key (received from a keyserver and locally
+signed; the keyring and mirrorlist packages are downloaded over
+HTTPS, never `TrustAll`, `SigLevel` unchanged), and is made
+idempotent. Adding it runs a full `pacman -Syu` afterwards to avoid
+partial upgrades. Adding this repository is **not a security
+improvement**; do not enable it unless you need one of those
+packages.
 
 ### hardened_malloc
 
 Advanced, optional. `hardened_malloc` is a hardened malloc
 replacement. It is **not** in the official repositories — it is
 installed from Chaotic-AUR (if enabled) or manually from the AUR.
-The script:
+If the package is already installed, the Chaotic-AUR check is
+skipped. The script:
 
 * raises `vm.max_map_count` as recommended upstream,
 * does **not** preload it globally by default. Global
@@ -315,6 +337,8 @@ detected network manager so it never races with a boot-time script:
   `ethernet.cloned-mac-address` to `random` or `stable`, plus
   `wifi.scan-rand-mac-address=yes`.
 * systemd-networkd: `[Link] MACAddressPolicy=random|persistent`.
+  The generated drop-in has no `[Match]` section; review it before
+  using bridges, bonds, or container/virtual links.
 * iwd: already randomizes per network by default; the script makes
   `AddressRandomization=network` explicit.
 * No supported manager (e.g. plain dhcpcd): installs `macchanger`
@@ -329,7 +353,9 @@ Two options, both clearly limited:
 
 * set the hostname to the generic `host` — removes one identifier,
   but a static generic hostname can itself become a stable
-  identifier and provides no anonymity;
+  identifier and provides no anonymity. The script writes
+  `/etc/hostname` but does not edit `/etc/hosts`; update that file
+  yourself if local name resolution depends on the hostname;
 * stop announcing the hostname to DHCP servers
   (NetworkManager `hostname.send-hostname=0`, systemd-networkd
   `SendHostname=no`).
@@ -349,12 +375,16 @@ break software that expects group-readable files.
   obsolete `/etc/securetty` editing was removed (pam_securetty is
   not used by Arch's PAM stack).
 * **Lock the root password** (`passwd -l root`): prevents password
-  login as root; sudo and console recovery with an admin account
-  still work.
+  login as root; sudo and recovery through another administrative
+  account still work. The locked password cannot be used at the
+  console.
 * **Deny root SSH login**: writes a drop-in
   `/etc/ssh/sshd_config.d/99-arch-hardening.conf` with
-  `PermitRootLogin no`, validates the result with `sshd -t`, and
-  never touches `/etc/ssh/sshd_config` itself.
+  `PermitRootLogin no`, validates it with `sshd -t`, checks the
+  effective value with `sshd -T` when available, and never touches
+  `/etc/ssh/sshd_config` itself. If the main configuration does not
+  include `sshd_config.d/*.conf`, or an earlier file overrides the
+  directive, the script warns that the drop-in may be ineffective.
 
 ### Coredumps
 
@@ -407,7 +437,9 @@ complete mitigation.
 ### Wireless / Bluetooth
 
 * One-shot `rfkill block all` (optionally unblocking Wi-Fi again).
-  This is **not persistent** across reboots.
+  This immediately drops Wi-Fi, WWAN, and Bluetooth, including a
+  remote session carried over them. It is not reliably persistent
+  across reboots; systemd may restore the blocked state.
 * Persistent Bluetooth disable via modprobe blacklist of `bluetooth`
   and `btusb`. Existing loaded modules stay loaded until reboot.
 
@@ -467,21 +499,25 @@ Do not run code from the Internet blindly. Clone, review, then run:
 ```sh
 git clone https://github.com/daviduhden/arch-hardening-script.git
 cd arch-hardening-script
-review hardening.bash and README.md
 sudo bash hardening.bash
 ```
 
-Each measure prompts for confirmation. Answer `y` to apply, `n` to
-skip, `Ctrl-C` to abort. You are asked to reboot at the end.
+Before running it, review `hardening.bash`,
+`spoof-mac-addresses.bash`, and `README.md` in your editor. Both
+scripts must stay in the same directory: `hardening.bash` installs
+`spoof-mac-addresses.bash` when the macchanger fallback is selected
+and fails if the file is missing. Each measure prompts for
+confirmation. Answer `y` to apply, `n` to skip, `Ctrl-C` to abort.
+You are asked to reboot at the end.
 
 ## Command-Line Options
 
 | Flag              | Description                                    |
 |-------------------|------------------------------------------------|
 | `--help`, `-h`    | Show usage.                                    |
-| `--dry-run`       | Print the full plan (packages, files, services, sysctls, kernel parameters, firewall) without modifying anything. Does not require root. |
-| `--undo`          | Revert configuration changes made by a previous run (see below). |
-| `--config FILE`   | Read answers from `FILE` (`KEY=value`, one per line) instead of prompting; suitable for reproducible setups. Not a replacement for review. |
+| `--dry-run`       | Print the planned packages, files, services, sysctls, kernel parameters, and firewall rules without modifying anything. Does not require root. Some decisions still inspect the real system, so the plan can be incomplete when a package or repository is not actually installed. |
+| `--undo`          | Revert configuration changes made by a previous run (see below). Requires root; use `--undo --dry-run` to preview. |
+| `--config FILE`   | Read answers from `FILE` (`KEY=value`, one per line) for the keys present. Missing keys still prompt; in `--dry-run` they default to yes. Suitable for reproducible setups, not a replacement for review. |
 | `--disable-checks`| Skip the distribution compatibility check. Only for advanced users; can produce breakage on other systems. |
 | `--version`       | Print the version.                             |
 
@@ -545,7 +581,7 @@ script creates **one** backup next to the file with the suffix
 overwritten by later runs, so they always represent the state
 before this project first touched the file.
 
-Every action is recorded in
+Most configuration actions are recorded in
 `/var/lib/arch-hardening-script/journal`. `--undo` replays that
 journal:
 
@@ -564,28 +600,43 @@ state that was changed by other tools in between.
 
 A few actions are deliberately **not** reverted automatically:
 `passwd -l root` is left in place (unlocking root automatically
-would re-enable password logins, a security regression), and
-one-shot `rfkill` calls are not persistent anyway. Undo the root
-lock manually with `passwd -u root` if you really need it.
+would re-enable password logins, a security regression), one-shot
+`rfkill` calls are not persistent anyway, and `timedatectl set-ntp
+0` is not reversed. Undo the root lock manually with `passwd -u
+root` if you really need it. Package upgrades and Chaotic-AUR
+key/keyring changes are also not reversed. Live sysctl values,
+loaded modules, firewall rules, and running services remain in
+effect until a restart or reboot.
 
-Manual rollback is also simple: every persistent change is one of
-the following:
+Manual rollback is also simple: persistent changes made by the
+script include:
 
 * `/etc/sysctl.d/99-arch-hardening.conf` (and
   `99-arch-hardening-malloc.conf`, `99-arch-hardening-coredumps.conf`)
 * `/etc/modprobe.d/99-arch-hardening-*.conf`
 * the managed block in `/etc/default/grub`
+* `/boot/loader/entries/*.conf` and `/boot/syslinux/syslinux.cfg`
 * `/etc/NetworkManager/conf.d/90-arch-hardening-*.conf`
+  and `/etc/iwd/main.conf`
 * `/etc/systemd/network/99-arch-hardening-*` and the
   `*.network.d/99-arch-hardening-*.conf` drop-ins
 * `/etc/systemd/coredump.conf.d/99-arch-hardening.conf`
 * `/etc/profile.d/99-arch-hardening-umask.sh`
 * `/etc/ssh/sshd_config.d/99-arch-hardening.conf`
 * `/etc/nftables.conf`
+* `/etc/pacman.conf` (Chaotic-AUR block and Tor `XferCommand`)
+* `/etc/pam.d/su` and `/etc/pam.d/su-l`
+* `/etc/hostname`, `/etc/ld.so.preload`, and
+  `/etc/security/limits.conf`
+* `/etc/usbguard/rules.conf` and `/etc/apparmor/parser.conf`
+* `/usr/lib/arch-hardening-script/spoof-mac-addresses` and the
+  generated macspoof service
+* the setuid bit on `/usr/bin/bwrap`
 * service states (`systemctl`/`rc-update`/`dinitctl`/… equivalents)
 
 Remove the relevant file (or restore its `.arch-hardening.bak`)
-and reboot.
+and reboot. Installed packages and Chaotic-AUR keyring/mirrorlist
+packages must be removed manually.
 
 ## Verification
 
@@ -623,6 +674,9 @@ lsmod | grep -E '^bluetooth|^btusb'   # empty after reboot
 # time synchronization
 timedatectl                          # systemd
 chronyc tracking                     # chrony on Artix
+
+# effective SSH policy (root)
+sudo sshd -T | grep -i permitrootlogin
 ```
 
 ## Compatibility Notes
@@ -649,7 +703,19 @@ Known breakage when the corresponding option is enabled:
 * hardened_malloc global preload: Electron-based apps and various
   games may crash; per-application use avoids this.
 * linux-hardened: no unprivileged user namespaces (Flatpak and
-  bubblewrap need the setuid fallback), kexec unavailable.
+  bubblewrap need the setuid fallback), kexec unavailable. With
+  systemd-boot or Syslinux, no kernel entry is created
+  automatically.
+* nftables firewall: the default-drop `forward` chain breaks
+  container and VM forwarding (Docker, libvirt, podman). If SSH is
+  not detected, or you decline to allow it, default-deny blocks new
+  inbound SSH connections (existing sessions may survive).
+* `rfkill block all`: drops Wi-Fi, WWAN, and Bluetooth immediately,
+  including a remote session over those links.
+* hostname `host`: `/etc/hosts` is not updated; local resolution
+  may still use the old name.
+* apparmor.d: third-party profiles are not stable upstream; use
+  `aa-complain` when an application breaks.
 
 ## Security Limitations
 
@@ -688,9 +754,16 @@ This script cannot protect against:
 
 ## Development
 
-Static checks (no automated test suite ships with this project):
+Static checks (no automated test suite ships with this project; a
+mock-based suite was removed because asserting against mock logs did
+not verify real behavior):
 
 ```sh
 bash -n hardening.bash
+bash -n spoof-mac-addresses.bash
 shellcheck hardening.bash
+shellcheck spoof-mac-addresses.bash
 ```
+
+There is no Makefile, CI configuration, or test runner. Do not claim
+a test suite passed when only these static checks were run.

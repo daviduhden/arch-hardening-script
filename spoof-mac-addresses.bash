@@ -29,41 +29,86 @@ error() { printf \
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+# Interfaces this script brought down, restored by the EXIT trap
+# if the process is interrupted.
+DOWN_IFACES=""
+
+cleanup() {
+	local iface
+	for iface in $DOWN_IFACES; do
+		ip link set dev "$iface" up 2>/dev/null || true
+	done
+}
+trap cleanup EXIT
+
 # Function to spoof MAC addresses
 spoof_mac_addresses() {
-	# Get list of network interfaces.
-	# Excludes loopback and virtual machine interfaces.
-	# Use a safe glob/for loop instead of `ls | grep`
-	# to handle arbitrary interface names.
+	local failures=0 iface p
+	# Get list of network interfaces. Only physical devices are
+	# touched: /sys/class/net/*/device is absent for bridges,
+	# bonds, VLANs, veth pairs, tunnels and other virtual links.
+	# Bond/bridge slaves are skipped through master/brport.
 	for p in /sys/class/net/*; do
 		[ -e "$p" ] || continue
 		iface=${p##*/}
-		# Skip loopback, tunnels and virtual/bridge
-		# interfaces that have no (or a shared) hardware
-		# address to randomize.
 		case "$iface" in
 		lo | tun* | tap* | virbr* | docker* | veth* | \
 			br-* | bond* | dummy* | wg* | vmnet*)
 			continue
 			;;
 		esac
+		[ -e "/sys/class/net/$iface/device" ] || continue
+		if [ -e "/sys/class/net/$iface/master" ] ||
+			[ -e "/sys/class/net/$iface/brport" ]; then
+			continue
+		fi
+		# ARPHRD_ETHER (1) covers Ethernet and Wi-Fi; skip CAN,
+		# PPP, tunnels and other non-Ethernet link types.
+		local iface_type=""
+		read -r iface_type \
+			<"/sys/class/net/$iface/type" 2>/dev/null || continue
+		[ "$iface_type" = "1" ] || continue
+		# Interfaces without a MAC address (e.g. some WWAN
+		# links) cannot be spoofed.
+		[ -s "/sys/class/net/$iface/address" ] || continue
 
 		# A device must be down while its address is changed.
 		if ! ip link set dev "$iface" down; then
 			warn "could not bring $iface down; skipping"
+			failures=$((failures + 1))
 			continue
 		fi
+		DOWN_IFACES="$DOWN_IFACES $iface"
 		# -A randomizes both the vendor OUI and the device
 		# bytes. (-e would keep the manufacturer prefix, which
 		# weakens the privacy goal of this measure.)
-		macchanger -A "$iface" >/dev/null ||
+		if ! macchanger -A "$iface" >/dev/null; then
 			warn "macchanger failed on $iface"
-		ip link set dev "$iface" up ||
+			failures=$((failures + 1))
+		else
+			log "spoofed MAC address on $iface"
+		fi
+		if ! ip link set dev "$iface" up; then
 			warn "could not bring $iface up"
+			failures=$((failures + 1))
+		fi
 	done
+	[ "$failures" -eq 0 ]
 }
 
 main() {
+	if [ "$(id -u)" -ne 0 ]; then
+		error "must be run as root"
+		exit 1
+	fi
+	if ! command -v ip >/dev/null 2>&1; then
+		error "ip (iproute2) is required"
+		exit 1
+	fi
+	if ! command -v macchanger >/dev/null 2>&1; then
+		error "macchanger is required"
+		exit 1
+	fi
 	spoof_mac_addresses
 }
 
