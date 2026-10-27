@@ -79,9 +79,28 @@ the code accurately.
   Backups and Rollback, Verification.
 - `hardening.bash`: `feature_*`, `write_sysctl_file`,
   `apply_kernel_params`, `do_undo`.
+- `apply_kernel_params` deduplicates by parameter key and retains the first
+  staged value; `line_has_param` treats any existing value for that key as
+  present, so it does not overwrite a conflicting command-line value.
 - Linux kernel sysctl and parameter documentation:
   <https://docs.kernel.org/admin-guide/sysctl/> and
   <https://docs.kernel.org/admin-guide/kernel-parameters.html>.
 - Arch Wiki: Security, AppArmor, Nftables, Microcode.
 - Arch kernel configuration:
   <https://gitlab.archlinux.org/archlinux/packaging/packages/linux/-/blob/main/config.x86_64>.
+
+## Maintenance & Continuous Learning
+
+Whenever this skill is used to change the repository, review this skill after
+the implementation. Correct procedures that proved wrong, update commands,
+paths, configuration and examples, incorporate reusable findings, and remove
+outdated assumptions. Review the applicable root and nested `AGENTS.md` files,
+specialized agents and related skills; update only the knowledge affected by
+the work. Validate local references and run
+`python3 scripts/validate-agent-knowledge.py --scope worktree` plus the
+applicable project checks. For pull request comparisons, use the documented
+`--scope range --base BASE_REF --head HEAD_REF` command. The canonical validator
+is read-only and is required even when a task restricts execution of project
+scripts; this does not authorize running installers or changing the host.
+Report checks actually performed. A structural pass does not prove semantic
+relevance, and a task is incomplete until synchronization is validated.

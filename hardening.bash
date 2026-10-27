@@ -771,6 +771,8 @@ service_name_for() {
 # ---- kernel parameter accumulation -------------------------------
 # kernel_param_add <param>
 # Adds a kernel parameter, deduplicating by parameter key.
+# Keep one staged value per kernel-parameter key. If separate feature choices
+# request the same key, the first value remains the one that will be applied.
 kernel_param_add() {
 	local param="$1"
 	local key="${param%%=*}"
@@ -784,6 +786,8 @@ kernel_param_add() {
 	kernel_params="$kernel_params $param"
 }
 
+# Escape extended-regular-expression metacharacters before matching a key in
+# the whitespace-delimited kernel command line.
 param_key_regex() {
 	printf '%s' "$1" | sed 's/[][\\.^$*+?(){}|]/\\&/g'
 }
@@ -795,6 +799,8 @@ line_has_param() {
 	local key="${param%%=*}"
 	local key_re
 	key_re="$(param_key_regex "$key")"
+	# Presence is checked by key only; an existing key with a different value
+	# also counts as present and is left unchanged.
 	# Kernel command lines may separate options with tabs.
 	printf '%s\n' " $(printf '%s' "$line" | tr '\t' ' ') " |
 		grep -qE " ${key_re}(=| |$)"
