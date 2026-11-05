@@ -129,7 +129,7 @@ After each change:
 3. Do not use whitespace-only, timestamp-only, empty, or otherwise cosmetic
    edits to satisfy synchronization. For a project change, at least one
    relevant knowledge artifact must receive a substantive update.
-4. Run `python3 scripts/validate-agent-knowledge.py --scope worktree` and the
+4. Run `perl scripts/validate-agent-knowledge.pl --scope worktree` and the
    applicable project checks. For a pull request, CI compares the base and head
    revisions with `--scope range --base BASE_SHA --head HEAD_SHA`.
 5. Review the validator output and final diff, then report the synchronization
@@ -137,8 +137,8 @@ After each change:
    semantic relevance.
 
 Run the validator tests with
-`python3 -m unittest discover -s tests/agent_knowledge_validator -p 'test_*.py'`.
-The validator is read-only and uses Python 3.11+ and the standard library. It
+`prove tests/agent_knowledge_validator/test_validator.pl`.
+The validator is read-only and uses Perl 5.14+ (JSON::PP core) and the standard library. It
 must not be confused with project-specific validation or installation tools.
 See [Agent Knowledge Validation Contract](docs/agent-knowledge-validation.md)
 for AK001–AK006, JSON schema, exit codes, configuration, and maintenance rules.

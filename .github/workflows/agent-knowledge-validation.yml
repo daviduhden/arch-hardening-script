@@ -20,14 +20,10 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
       - name: Run canonical contract tests
-        run: python3 -m unittest discover -s tests/agent_knowledge_validator -p 'test_*.py' -v
+        run: prove tests/agent_knowledge_validator/test_validator.pl
       - name: Run canonical range validation
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: python3 scripts/validate-agent-knowledge.py --scope range --base "$BASE_SHA" --head "$HEAD_SHA"
+        run: perl scripts/validate-agent-knowledge.pl --scope range --base "$BASE_SHA" --head "$HEAD_SHA"
