@@ -69,9 +69,10 @@ git diff --check
 git status --short
 ```
 
-There is no Makefile, CI configuration, test runner, or automated test
-suite. Do not document or claim `make test`, a `tests/` directory, or a
-mock suite as current. The mock suite was removed in commit `7ea62a6`
+There is no Makefile or project test runner. The only CI configuration is the
+read-only pull-request workflow, which runs the shared agent-validator contract
+suite and range gate. Do not claim `make test`, a mock suite, or an application
+test suite as current. The mock suite was removed in commit `7ea62a6`
 and the test-only alternate root was removed in `6d86f6f`.
 
 Runtime commands such as `sudo bash hardening.bash`, `pacman`,
@@ -108,6 +109,25 @@ Load the relevant skill before editing:
   - touch nftables, SSH, sysctl, kernel parameters, or boot entries.
 - [mock-based-script-tests](.agents/skills/mock-based-script-tests/SKILL.md)
   - assess or add test coverage without faking real behavior.
+
+## GitHub Actions pin maintenance
+
+`.github/workflows/agent-knowledge-validation.yml` pins every external action
+to an immutable 40-character commit SHA; tags and branches are not acceptable.
+Update a pin only after verifying the release SHA, and change the `uses:` line
+and its trailing `# vX.Y.Z` comment together. Do not change triggers,
+permissions, concurrency, job names, or commands while updating a pin.
+
+| Action | Version | Commit SHA |
+| --- | --- | --- |
+| `actions/checkout` | `v7.0.1` | `3d3c42e5aac5ba805825da76410c181273ba90b1` |
+| `actions/upload-artifact` | `v7.0.2` | `cf430e030ddbb5b0abf93d22962f4752f3646cd9` |
+| `actions/cache` | `v6.1.0` | `55cc8345863c7cc4c66a329aec7e433d2d1c52a9` |
+| `actions/setup-java` | `v6.2.0` | `77dd5b2ce225ea11469928ac317850245a74ae78` |
+| `actions/setup-node` | `v7.1.0` | `949feb2413d6458794dcd2491c4babbbce0c15c1` |
+
+Validate a workflow edit with `actionlint .github/workflows/*.yml` and, when a
+`yamllint` configuration exists, `yamllint -c <config> .github/workflows`.
 
 ## Continuous Agent & Skills Maintenance
 
