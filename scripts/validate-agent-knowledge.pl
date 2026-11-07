@@ -1948,13 +1948,13 @@ sub make_report {
 sub print_report {
     my ( $report, $output_format ) = @_;
     if ( $output_format eq 'json' ) {
-        my $encoder =
-          JSON::PP->new->canonical(1)
-          ->pretty(1)
-          ->indent_length(2)
-          ->space_before(0)
-          ->space_after(1)
-          ->ascii(0);
+        my $encoder = JSON::PP->new;
+        $encoder->canonical(1);
+        $encoder->pretty(1);
+        $encoder->indent_length(2);
+        $encoder->space_before(0);
+        $encoder->space_after(1);
+        $encoder->ascii(0);
         print $encoder->encode($report);
         return;
     }
