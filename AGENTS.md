@@ -70,8 +70,8 @@ git status --short
 ```
 
 There is no Makefile or project test runner. The only CI configuration is the
-read-only pull-request workflow, which runs the shared agent-validator contract
-suite and range gate. Do not claim `make test`, a mock suite, or an application
+read-only manual workflow, which runs the shared agent-validator contract
+suite and worktree validation. Do not claim `make test`, a mock suite, or an application
 test suite as current. The mock suite was removed in commit `7ea62a6`
 and the test-only alternate root was removed in `6d86f6f`.
 
@@ -150,8 +150,8 @@ After each change:
    edits to satisfy synchronization. For a project change, at least one
    relevant knowledge artifact must receive a substantive update.
 4. Run `perl scripts/validate-agent-knowledge.pl --scope worktree` and the
-   applicable project checks. For a pull request, CI compares the base and head
-   revisions with `--scope range --base BASE_SHA --head HEAD_SHA`.
+   applicable project checks. To compare committed revisions locally, use
+   `--scope range --base BASE_SHA --head HEAD_SHA`.
 5. Review the validator output and final diff, then report the synchronization
    result. Warnings require human review; a structural pass does not establish
    semantic relevance.
