@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Arch / Artix hardening script.
-# Copyright (C) 2019 madaidan
-# Copyright (C) 2025-2026 David Uhden Collado
+# Copyright (C) 2025-2026, David Uhden Collado
+# Copyright (C) 2019, madaidan
 #
 # This program is free software: you can redistribute it and/or
 # modify it under the terms of the GNU General Public License as
